@@ -414,7 +414,7 @@ public final class BubbleService extends Service {
         quiz.cancel();
         vision.cancel();
         if (assist.running()) {
-            assist.cancel();
+            assist.release(true);
             screenStatus("Terjemah nonaktif.");
             restorePanel();
         } else if (assist.ready()) {
