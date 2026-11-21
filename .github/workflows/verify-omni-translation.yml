@@ -1,0 +1,119 @@
+name: Verify Omni Float live translation
+on:
+  push:
+    branches: [verify-omni-translation-v15]
+permissions:
+  contents: read
+jobs:
+  mock:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Prepare smoke instrumentation
+        run: |
+          sed -i "/versionCode 6/a\\        testInstrumentationRunner 'id.omni.floatai.SmokeInstrumentation'" app/build.gradle
+          mkdir -p app/src/androidTest/java/id/omni/floatai
+          cat > app/src/androidTest/java/id/omni/floatai/SmokeInstrumentation.java <<'JAVA'
+          package id.omni.floatai;
+          import android.app.*;
+          import android.os.*;
+          import android.graphics.*;
+          import android.text.StaticLayout;
+          import java.util.*;
+          import java.util.concurrent.*;
+          public class SmokeInstrumentation extends Instrumentation {
+              @Override public void onCreate(Bundle args) { super.onCreate(args); start(); }
+              @Override public void onStart() {
+                  var output = new Bundle();
+                  try {
+                      testLayout();
+                      DeviceTranslator[] translator = new DeviceTranslator[1];
+                      runOnMainSync(() -> translator[0] = new DeviceTranslator());
+                      var first = translate(translator[0], "Good morning, how are you today?");
+                      assertText(first, "selamat pagi");
+                      var second = translate(translator[0], "Thank you for reading this message.");
+                      assertText(second, "terima kasih");
+                      var cached = translate(translator[0], "Good morning, how are you today?");
+                      assertText(cached, "selamat pagi");
+                      runOnMainSync(() -> translator[0].close());
+                      output.putString("stream", "OMNI_SMOKE_PASS: translated two frames and repeated text\n");
+                      finish(Activity.RESULT_OK, output);
+                  } catch (Throwable problem) {
+                      output.putString("stream", android.util.Log.getStackTraceString(problem));
+                      finish(Activity.RESULT_CANCELED, output);
+                  }
+              }
+              void testLayout() {
+                  runOnMainSync(() -> {
+                      try {
+                          String message = "Kalimat terjemahan ini panjang dan harus tampil seluruhnya, " +
+                              "dengan beberapa baris yang membungkus teks secara otomatis.";
+                          var view = new TranslationOverlay(getTargetContext(),
+                              Collections.singletonList(new TranslationOverlay.Label(40, 200, 150, 18, message)));
+                          view.layout(0, 0, 480, 800);
+                          var field = TranslationOverlay.class.getDeclaredField("cards");
+                          field.setAccessible(true);
+                          Object card = ((List<?>)field.get(view)).get(0);
+                          var method = card.getClass().getDeclaredMethod("text");
+                          method.setAccessible(true);
+                          StaticLayout layout = (StaticLayout)method.invoke(card);
+                          if (layout.getLineCount() < 2 || layout.getLineEnd(layout.getLineCount()-1) != message.length())
+                              throw new AssertionError("Long text not wrapped in full");
+                          android.util.Log.i("OmniSmoke", "PASS layout displays the full text on multiple lines");
+                      } catch (Exception e) { throw new RuntimeException(e); }
+                  });
+              }
+              DeviceTranslator.Result translate(DeviceTranslator translator, String text) throws Exception {
+                  var result = new ArrayBlockingQueue<DeviceTranslator.Result>(1);
+                  var bmp = Bitmap.createBitmap(1000, 500, Bitmap.Config.ARGB_8888);
+                  var canvas = new Canvas(bmp);
+                  canvas.drawColor(Color.WHITE);
+                  var paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+                  paint.setColor(Color.BLACK);
+                  paint.setTextSize(42);
+                  canvas.drawText(text, 20, 200, paint);
+                  runOnMainSync(() -> translator.translate(bmp, s -> android.util.Log.i("OmniSmoke", s), result::offer));
+                  DeviceTranslator.Result value = result.poll(115, TimeUnit.SECONDS);
+                  if (value == null || value.error() != null)
+                      throw new AssertionError(value == null ? "Translation model timed out" : value.error());
+                  return value;
+              }
+              void assertText(DeviceTranslator.Result result, String expected) {
+                  for (var label : result.labels()) {
+                      if (label.value().toLowerCase(Locale.ROOT).contains(expected)) {
+                          android.util.Log.i("OmniSmoke", "PASS real on-device OCR and translation: " + label.value());
+                          return;
+                      }
+                  }
+                  throw new AssertionError("Expected " + expected + " in " + result.labels());
+              }
+          }
+          JAVA
+          gradle --no-daemon :app:assembleDebug :app:assembleDebugAndroidTest
+      - name: Enable emulator KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
+          script: |
+            adb install app/build/outputs/apk/debug/app-debug.apk
+            adb install app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+            adb shell am instrument -w id.omni.floatai.test/id.omni.floatai.SmokeInstrumentation | tee /tmp/instrumentation.txt
+            adb logcat -d -s OmniSmoke:I
+            grep -q OMNI_SMOKE_PASS /tmp/instrumentation.txt
