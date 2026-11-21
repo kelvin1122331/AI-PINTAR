@@ -97,7 +97,7 @@ jobs:
           require('Smart Floating Bubble')
           tap('Tempel otomatis ke tepi')
           adb('shell','input','keyevent','KEYCODE_BACK')
-          adb('shell','am','start','-n',package+'/.CameraTranslator')
+          tap_node(reveal('Kamera'))
           require('Terjemah Kamera')
           require('Jeda')
           require('Senter')
