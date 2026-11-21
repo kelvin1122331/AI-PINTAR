@@ -284,7 +284,8 @@ public final class BubbleService extends Service {
             | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN);
         float maxOpacity = Build.VERSION.SDK_INT >= 31
             ? getSystemService(android.hardware.input.InputManager.class).getMaximumObscuringOpacityForTouch() : 0.8f;
-        layout.alpha = Math.max(0f, maxOpacity - 0.04f);
+        layout.alpha = Math.max(0f, maxOpacity - 0.07f);
+        layout.setTitle("Omni Float Translation");
         if (Build.VERSION.SDK_INT >= 30) layout.setFitInsetsTypes(0);
         try {
             windows.addView(layer, layout);

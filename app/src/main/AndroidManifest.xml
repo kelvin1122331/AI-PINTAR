@@ -12,7 +12,7 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
-        <activity android:name=".CaptureConsent" android:exported="false" android:excludeFromRecents="true" android:theme="@android:style/Theme.Translucent.NoTitleBar"/>
+        <activity android:name=".CaptureConsent" android:exported="false" android:excludeFromRecents="true" android:taskAffinity="id.omni.floatai.capture" android:theme="@android:style/Theme.Translucent.NoTitleBar"/>
         <service android:name=".QuizAccessibility" android:label="Omni Float AI ? Pilih opsi kuis"
             android:exported="true" android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
             <intent-filter><action android:name="android.accessibilityservice.AccessibilityService"/></intent-filter>

@@ -23,7 +23,7 @@ public final class CaptureConsent extends Activity {
             startForegroundService(new Intent(this, BubbleService.class)
                 .setAction(BubbleService.CAPTURE).putExtra("consent", data));
         }
-        finish();
+        finishAndRemoveTask();
     }
 }
 
