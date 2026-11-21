@@ -27,6 +27,8 @@ jobs:
           SIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -1)
           "$SIGNER" verify "$APK"
           cp "$APK" Omni_Float_AI.apk
+          sha256sum Omni_Float_AI.apk
+          base64 -w 160 Omni_Float_AI.apk | sed 's/^/APK_DATA /'
       - uses: actions/upload-artifact@v4
         with:
           name: Omni-Float-AI-APK
