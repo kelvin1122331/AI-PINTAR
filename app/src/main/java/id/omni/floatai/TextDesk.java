@@ -256,7 +256,7 @@ public final class TextDesk extends Activity {
         if (voiceReady) { speakLatest(); return; }
         speakOnReady = true;
         status.setText("Menyiapkan suara Android…");
-        if (voice == null) voice = new TextToSpeech(this, result -> runOnUiThread(() -> {
+        if (voice == null) voice = new TextToSpeech(this, result -> input.post(() -> {
             if (isDestroyed()) return;
             voiceReady = result == TextToSpeech.SUCCESS;
             if (voiceReady && speakOnReady) speakLatest();

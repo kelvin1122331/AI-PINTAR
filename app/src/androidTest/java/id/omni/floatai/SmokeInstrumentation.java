@@ -142,24 +142,30 @@ public class SmokeInstrumentation extends Instrumentation {
         require(!ScreenScene.changed(scene, raw), "overlay compositing is removed from the scene fingerprint");
         for (int i = 2450; i < 2590; i++) raw[i] = 0xff242424;
         require(ScreenScene.changed(scene, raw), "genuine scroll changes still trigger translation");
+        var drawFailure = new java.util.concurrent.atomic.AtomicReference<Throwable>();
         runOnMainSync(() -> {
-            var layer = new TranslationOverlay(context, java.util.Collections.singletonList(
-                new TranslationOverlay.Label(250, 420, 500, 90, "Selamat pagi dan selamat datang")));
-            layer.layout(0, 0, 800, 400);
-            var frame = Bitmap.createBitmap(800, 400, Bitmap.Config.ARGB_8888);
-            var canvas = new Canvas(frame);
-            canvas.drawColor(0xffffffff);
-            int save = canvas.saveLayerAlpha(0, 0, 800, 400, 179);
-            layer.draw(canvas);
-            canvas.restoreToCount(save);
-            int visible = frame.getPixel(209, 175);
-            require(visible != 0xffffffff, "translation draws actual overlay pixels");
-            layer.restoreBackground(frame, 800, 400, .70f);
-            int restored = frame.getPixel(209, 175);
-            frame.recycle();
-            require(((restored >> 16) & 255) >= 245 && ((restored >> 8) & 255) >= 245,
-                "translation overlay pixels are restored for the next OCR frame");
+            try {
+                var layer = new TranslationOverlay(context, java.util.Collections.singletonList(
+                    new TranslationOverlay.Label(250, 420, 500, 90, "Selamat pagi dan selamat datang")));
+                layer.layout(0, 0, 800, 400);
+                var frame = Bitmap.createBitmap(800, 400, Bitmap.Config.ARGB_8888);
+                var canvas = new Canvas(frame);
+                canvas.drawColor(0xffffffff);
+                int save = canvas.saveLayerAlpha(0, 0, 800, 400, 179);
+                layer.draw(canvas);
+                canvas.restoreToCount(save);
+                int visible = frame.getPixel(209, 175);
+                require(visible != 0xffffffff, "translation draws actual overlay pixels");
+                layer.restoreBackground(frame, 800, 400, .70f);
+                int restored = frame.getPixel(209, 175);
+                frame.recycle();
+                require(((restored >> 16) & 255) >= 245 && ((restored >> 8) & 255) >= 245,
+                    "translation overlay pixels are restored for the next OCR frame");
+            } catch (Throwable error) {
+                drawFailure.set(error);
+            }
         });
+        if (drawFailure.get() != null) throw new AssertionError("Offscreen overlay test", drawFailure.get());
     }
 
     private static final class MockConnection extends HttpsURLConnection {
