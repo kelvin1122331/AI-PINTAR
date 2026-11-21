@@ -3,6 +3,8 @@ package id.omni.floatai;
 import android.app.*;
 import android.content.*;
 import android.os.*;
+import android.text.Editable;
+import android.text.TextWatcher;
 import android.view.*;
 import android.widget.*;
 import java.util.ArrayList;
@@ -24,6 +26,10 @@ public final class Toolbox extends Activity {
     private String last = "";
     private int tab;
     private final Runnable update = this::refreshMonitor;
+    private static final int IMPORT_TEXT = 621;
+    private static final int EXPORT_TEXT = 622;
+    private String pendingExport;
+    private TextView monitorSummary;
 
     static void copy(Context context, String text) {
         if (text.isEmpty()) { Toast.makeText(context, "Belum ada teks.", Toast.LENGTH_SHORT).show(); return; }
@@ -42,25 +48,29 @@ public final class Toolbox extends Activity {
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
-        render(getIntent().getIntExtra("tab", 0));
+        if (state != null) {
+            pendingExport = state.getString("export");
+            last = state.getString("result", "");
+        }
+        render(state != null ? state.getInt("tab", 0) : getIntent().getIntExtra("tab", 0));
     }
 
     private void render(int page) {
+        saveDraft();
         cancel();
+        ui.removeCallbacks(update);
         tab = page;
         var root = Chat.column(this);
         int pad = Chat.dp(this, 16);
         root.setPadding(pad, pad, pad, pad);
         applyInsets(root, pad);
         root.setBackgroundColor(Chat.BG);
-        var title = Chat.label(this, "Ruang AI", 28, Chat.INK);
-        title.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
-        root.addView(title);
+        root.addView(OmniUi.title(this, "Ruang AI", 28));
         var tabs = new LinearLayout(this);
-        tabs.addView(Chat.button(this, "Belajar", page == 0, () -> render(0)), new LinearLayout.LayoutParams(0,-2,1));
-        tabs.addView(Chat.button(this, "Koneksi", page == 1, () -> render(1)), new LinearLayout.LayoutParams(0,-2,1));
-        tabs.addView(Chat.button(this, "Bubble", page == 2, () -> render(2)), new LinearLayout.LayoutParams(0,-2,1));
-        root.addView(tabs);
+        OmniUi.rowButton(tabs, "Belajar", page == 0, () -> render(0));
+        OmniUi.rowButton(tabs, "Koneksi", page == 1, () -> render(1));
+        OmniUi.rowButton(tabs, "Bubble", page == 2, () -> render(2));
+        OmniUi.addSpace(root, tabs, 8);
         var scroll = new ScrollView(this);
         body = Chat.column(this);
         body.setPadding(0, pad, 0, pad);
@@ -82,7 +92,7 @@ public final class Toolbox extends Activity {
     }
 
     private void study() {
-        body.addView(Chat.label(this, "AI Study Mode", 21, Chat.INK));
+        body = OmniUi.card(this, body, "AI Study Mode");
         mode = picker("Jenis bantuan", StudyTools.MODES, 0);
         style = picker("Panjang respons", new String[]{"Singkat", "Seimbang", "Mendalam"}, 1);
         input = new EditText(this);
@@ -97,7 +107,10 @@ public final class Toolbox extends Activity {
             getIntent().removeExtra("studyText");
         }
         body.addView(input);
-        button("Buat", true, this::generate);
+        var inputActions = new LinearLayout(this);
+        OmniUi.rowButton(inputActions, "Impor TXT", false, () -> startActivityForResult(LocalDocuments.open("text/*"), IMPORT_TEXT));
+        OmniUi.rowButton(inputActions, "Buat", true, this::generate);
+        OmniUi.addSpace(body, inputActions, 8);
         button("Hentikan", false, () -> { cancel(); feedback.setText("Permintaan dihentikan."); });
         feedback = Chat.label(this, "", 14, Chat.PURPLE);
         body.addView(feedback);
@@ -111,8 +124,15 @@ public final class Toolbox extends Activity {
             startActivity(Intent.createChooser(new Intent(Intent.ACTION_SEND).setType("text/plain")
                 .putExtra(Intent.EXTRA_TEXT, last), "Bagikan materi"));
         });
+        button("Ekspor hasil TXT", false, () -> export("Omni_Catatan.txt", last));
         button("Simpan ke catatan", false, this::saveNote);
-        button("Buka catatan", false, this::notes);
+        button("Cari dan buka catatan", false, this::notes);
+        button("Jadikan kartu ulasan", false, () -> {
+            int added = ReviewDeck.add(this, last, System.currentTimeMillis());
+            feedback.setText(added == 0 ? "Buat flashcard dengan format Depan | Belakang. Kartu yang sudah ada tidak diduplikasi."
+                : added + " kartu masuk ke jadwal ulasan.");
+        });
+        button("Ulas kartu hari ini", false, this::review);
         button("Belajar 25 menit", false, this::timer);
     }
 
@@ -121,7 +141,7 @@ public final class Toolbox extends Activity {
         if (prompt.isEmpty()) { feedback.setText("Isi materi terlebih dulu."); return; }
         StudyTools.prefs(this).edit().putString("draft", prompt).apply();
         int modeIndex = mode.getSelectedItemPosition(), detail = style.getSelectedItemPosition();
-        request("Menyiapkan materi…", () -> StudyTools.request(modeIndex, prompt, detail), answerText -> {
+        request("Menyiapkan materi.", () -> StudyTools.request(modeIndex, prompt, detail), answerText -> {
             last = answerText;
             answer.setText(last);
             feedback.setText("Materi siap.");
@@ -145,16 +165,166 @@ public final class Toolbox extends Activity {
         try {
             var items = new org.json.JSONArray(prefs.getString("notes", "[]"));
             if (items.length() == 0) { feedback.setText("Belum ada catatan."); return; }
-            var names = new String[items.length()];
-            for (int i = 0; i < names.length; i++) {
-                String text = items.getString(i).replace('\n', ' ');
-                names[i] = text.substring(0, Math.min(text.length(), 70));
-            }
-            new AlertDialog.Builder(this).setTitle("Catatan tersimpan").setItems(names, (d, index) -> {
-                last = items.optString(index);
+            var panel = Chat.column(this);
+            int pad = Chat.dp(this, 16);
+            panel.setPadding(pad, 0, pad, 0);
+            var search = new EditText(this);
+            search.setHint("Cari isi catatan");
+            panel.addView(search);
+            var list = new ListView(this);
+            panel.addView(list, new LinearLayout.LayoutParams(-1, Chat.dp(this, 280)));
+            var matches = new ArrayList<String>();
+            var adapter = new ArrayAdapter<String>(this, android.R.layout.simple_list_item_1);
+            list.setAdapter(adapter);
+            Runnable filter = () -> {
+                adapter.setNotifyOnChange(false);
+                adapter.clear();
+                matches.clear();
+                String query = search.getText().toString().trim().toLowerCase(java.util.Locale.ROOT);
+                for (int i = 0; i < items.length(); i++) {
+                    String entry = items.optString(i);
+                    if (!entry.toLowerCase(java.util.Locale.ROOT).contains(query)) continue;
+                    matches.add(entry);
+                    String line = entry.replace('\n', ' ');
+                    adapter.add(line.substring(0, Math.min(line.length(), 90)));
+                }
+                adapter.notifyDataSetChanged();
+            };
+            search.addTextChangedListener(new TextWatcher() {
+                public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+                public void onTextChanged(CharSequence s, int start, int before, int count) { filter.run(); }
+                public void afterTextChanged(Editable s) {}
+            });
+            filter.run();
+            var dialog = new AlertDialog.Builder(this).setTitle("Catatan tersimpan").setView(panel)
+                .setNegativeButton("Tutup", null).create();
+            list.setOnItemClickListener((v, row, index, rowId) -> {
+                last = matches.get(index);
                 answer.setText(last);
-            }).setNegativeButton("Tutup", null).show();
+                dialog.dismiss();
+            });
+            dialog.show();
         } catch (Exception error) { feedback.setText("Catatan belum dapat dibuka."); }
+    }
+
+    private void review() {
+        var due = ReviewDeck.due(this, System.currentTimeMillis());
+        if (due.isEmpty()) {
+            feedback.setText(ReviewDeck.read(this).isEmpty() ? "Belum ada kartu. Simpan hasil flashcard terlebih dulu."
+                : "Belum ada kartu yang jatuh tempo.");
+            return;
+        }
+        var panel = Chat.column(this);
+        int pad = Chat.dp(this, 16);
+        panel.setPadding(pad, pad, pad, pad);
+        var prompt = OmniUi.title(this, "", 20);
+        var progress = OmniUi.caption(this, "");
+        var solution = Chat.label(this, "", 16, Chat.INK);
+        panel.addView(progress);
+        OmniUi.addSpace(panel, prompt, 10);
+        OmniUi.addSpace(panel, solution, 10);
+        var dialog = new AlertDialog.Builder(this).setTitle("Kartu ulasan")
+            .setNegativeButton("Selesai", null).create();
+        int[] index = {0};
+        var choices = new LinearLayout(this);
+        var again = Chat.button(this, "Ulangi 10 menit", false, () -> {});
+        var remember = Chat.button(this, "Ingat", true, () -> {});
+        choices.addView(again, new LinearLayout.LayoutParams(0, -2, 1));
+        choices.addView(remember, new LinearLayout.LayoutParams(0, -2, 1));
+        var reveal = Chat.button(this, "Lihat jawaban", true, () -> {
+            if (index[0] >= due.size()) return;
+            solution.setText(due.get(index[0]).back());
+            choices.setVisibility(View.VISIBLE);
+        });
+        OmniUi.addSpace(panel, reveal, 12);
+        OmniUi.addSpace(panel, choices, 8);
+        Runnable show = () -> {
+            choices.setVisibility(View.GONE);
+            solution.setText("");
+            if (index[0] >= due.size()) {
+                prompt.setText("Ulasan selesai.");
+                progress.setText(due.size() + " kartu dinilai.");
+                reveal.setVisibility(View.GONE);
+                return;
+            }
+            progress.setText((index[0] + 1) + " / " + due.size());
+            prompt.setText(due.get(index[0]).front());
+        };
+        again.setOnClickListener(v -> {
+            if (index[0] >= due.size()) return;
+            ReviewDeck.grade(this, due.get(index[0]++), false, System.currentTimeMillis());
+            show.run();
+        });
+        remember.setOnClickListener(v -> {
+            if (index[0] >= due.size()) return;
+            ReviewDeck.grade(this, due.get(index[0]++), true, System.currentTimeMillis());
+            show.run();
+        });
+        var scroller = new ScrollView(this);
+        scroller.addView(panel);
+        dialog.setView(scroller);
+        show.run();
+        dialog.show();
+    }
+
+    private void export(String fileName, String contents) {
+        if (contents.isEmpty()) { feedback.setText("Belum ada hasil untuk diekspor."); return; }
+        pendingExport = contents;
+        startActivityForResult(LocalDocuments.saveText(fileName), EXPORT_TEXT);
+    }
+
+    @Override protected void onActivityResult(int request, int result, Intent data) {
+        super.onActivityResult(request, result, data);
+        String exported = request == EXPORT_TEXT ? pendingExport : null;
+        if (request == EXPORT_TEXT) pendingExport = null;
+        if (result != RESULT_OK || data == null || data.getData() == null) return;
+        var uri = data.getData();
+        if (request == IMPORT_TEXT) {
+            worker.execute(() -> {
+                try {
+                    String value = LocalDocuments.readText(getContentResolver(), uri);
+                    runOnUiThread(() -> {
+                        if (isDestroyed() || tab != 0) return;
+                        input.setText(value);
+                        saveDraft();
+                        feedback.setText(value.length() > 10000 ? "Materi dimuat hingga batas 10.000 karakter." : "Materi TXT dimuat.");
+                    });
+                } catch (Exception error) { runOnUiThread(() -> showFeedback("File TXT tidak dapat dibuka atau melebihi 128 KB.")); }
+            });
+        } else if (request == EXPORT_TEXT && exported != null) {
+            worker.execute(() -> {
+                try {
+                    LocalDocuments.writeText(getContentResolver(), uri, exported);
+                    runOnUiThread(() -> showFeedback("File TXT tersimpan."));
+                } catch (Exception error) { runOnUiThread(() -> showFeedback("File TXT belum tersimpan.")); }
+            });
+        }
+    }
+
+    private void showFeedback(String value) {
+        if (!isDestroyed() && feedback != null && tab != 2) feedback.setText(value);
+    }
+
+    private void saveDraft() {
+        if (tab == 0 && input != null) StudyTools.prefs(this).edit().putString("draft", input.getText().toString()).apply();
+    }
+
+    @Override protected void onStop() {
+        ui.removeCallbacks(update);
+        saveDraft();
+        super.onStop();
+    }
+
+    @Override protected void onResume() {
+        super.onResume();
+        refreshMonitor();
+    }
+
+    @Override protected void onSaveInstanceState(Bundle state) {
+        state.putInt("tab", tab);
+        state.putString("export", pendingExport);
+        state.putString("result", last);
+        super.onSaveInstanceState(state);
     }
 
     private void timer() {
@@ -176,12 +346,15 @@ public final class Toolbox extends Activity {
 
     private TextView metrics;
     private void monitor() {
-        body.addView(Chat.label(this, "AI Connection Monitor", 21, Chat.INK));
+        body = OmniUi.card(this, body, "AI Connection Monitor");
+        monitorSummary = OmniUi.title(this, "", 16);
+        OmniUi.addSpace(body, monitorSummary, 6);
         feedback = Chat.label(this, "", 14, Chat.PURPLE);
         body.addView(feedback);
-        button("Tes koneksi AI", true, () -> request("Mengirim ping ke model aktif…",
+        button("Tes koneksi AI", true, () -> request("Mengirim ping ke model aktif.",
             () -> new org.json.JSONArray().put(new org.json.JSONObject().put("role", "user").put("content", "Jawab hanya: OK")),
             text -> { feedback.setText("Provider merespons."); refreshMonitor(); }));
+        button("Ekspor laporan TXT", false, () -> export("Omni_Koneksi.txt", ConnectionMonitor.report(ConnectionMonitor.history())));
         button("Bersihkan riwayat", false, () -> { ConnectionMonitor.clear(); refreshMonitor(); });
         metrics = Chat.label(this, "", 14, Chat.INK);
         metrics.setTextIsSelectable(true);
@@ -193,12 +366,15 @@ public final class Toolbox extends Activity {
         ui.removeCallbacks(update);
         if (tab != 1 || metrics == null) return;
         var history = ConnectionMonitor.history();
+        var score = ConnectionMonitor.summarize(history);
+        monitorSummary.setText(score.total() == 0 ? "Belum ada data koneksi" : score.success() * 100 / score.total()
+            + "% berhasil · " + score.total() + " permintaan\nMedian " + score.medianMillis() + " ms · p95 " + score.p95Millis() + " ms");
         Collections.reverse(history);
         if (history.isEmpty()) metrics.setText("Belum ada permintaan AI pada sesi ini.");
         else {
             var text = new StringBuilder("Estimasi token untuk teks. Gambar tidak dihitung.\n");
             for (var event : history) {
-                text.append("\n").append(event.model()).append("  •  ").append(event.millis()).append(" ms\n")
+                text.append("\n").append(event.model()).append("  ·  ").append(event.millis()).append(" ms\n")
                     .append("≈ ").append(event.input()).append(" masuk / ").append(event.output()).append(" keluar\n")
                     .append(event.error() == null ? "Berhasil" : event.error()).append("\n");
             }
@@ -209,7 +385,8 @@ public final class Toolbox extends Activity {
 
     private void bubble() {
         var prefs = BubbleService.appearance(this);
-        body.addView(Chat.label(this, "Smart Floating Bubble", 21, Chat.INK));
+        body = OmniUi.card(this, body, "Smart Floating Bubble");
+        OmniUi.addSpace(body, OmniUi.caption(this, "Ketuk untuk membuka panel. Tekan lama untuk pintasan."), 5);
         slider("Ukuran", 32, 68, prefs.getInt("size", 56), " dp", v -> prefs.edit().putInt("size", v).apply());
         slider("Transparansi", 15, 100, prefs.getInt("opacity", 100), "% terlihat",
             v -> prefs.edit().putInt("opacity", v).apply());

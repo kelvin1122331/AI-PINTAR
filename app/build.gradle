@@ -6,8 +6,17 @@ android {
         applicationId 'id.omni.floatai'
         minSdk 26
         targetSdk 35
-        versionCode 8
-        versionName '2.0'
+        testInstrumentationRunner 'id.omni.floatai.SmokeInstrumentation'
+        versionCode 9
+        versionName '2.1'
+    }
+    splits {
+        abi {
+            enable true
+            reset()
+            include 'arm64-v8a', 'armeabi-v7a', 'x86_64', 'x86'
+            universalApk true
+        }
     }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
@@ -28,4 +37,3 @@ dependencies {
     implementation 'com.google.mlkit:translate:17.0.3'
     implementation 'com.google.mlkit:language-id:17.0.6'
 }
-

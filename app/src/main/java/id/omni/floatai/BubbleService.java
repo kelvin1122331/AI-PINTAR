@@ -18,9 +18,15 @@ public final class BubbleService extends Service {
     static final String CAPTURE = "id.omni.floatai.CAPTURE";
     private static final String CHANNEL = "floating_chat";
     private static final String STOP = "id.omni.floatai.STOP";
+    private static final String PAUSE = "id.omni.floatai.PAUSE_TRANSLATION";
     private WindowManager windows;
     private View overlay;
     private TranslationOverlay translation;
+    private java.util.List<TranslationOverlay.Label> rendered = java.util.Collections.emptyList();
+    private float translationOpacity;
+    private boolean shuttingDown;
+    private AlertDialog activeDialog;
+    private boolean quizExpanded;
     private boolean panelOpen;
     private boolean startTranslationAfterConsent;
     private int bubbleX;
@@ -50,17 +56,15 @@ public final class BubbleService extends Service {
         if (started) {
             if (capture) connectCapture(intent);
             if (intent != null && APPEARANCE.equals(intent.getAction())) showBubble();
+            if (intent != null && PAUSE.equals(intent.getAction()) && assist.running()) {
+                assist.setPaused(!assist.paused());
+                if (panelOpen && toolsTab) showPanel();
+            }
             return START_NOT_STICKY;
         }
         var notifications = getSystemService(NotificationManager.class);
         notifications.createNotificationChannel(new NotificationChannel(CHANNEL, "Bubble chat AI", NotificationManager.IMPORTANCE_LOW));
-        var stop = PendingIntent.getService(this, 1, new Intent(this, BubbleService.class).setAction(STOP),
-            PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
-        var open = PendingIntent.getActivity(this, 2, new Intent(this, MainActivity.class),
-            PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
-        notification = new Notification.Builder(this, CHANNEL).setSmallIcon(R.drawable.omni)
-            .setContentTitle("Omni Float AI").setContentText("Bubble chat aktif").setOngoing(true)
-            .setContentIntent(open).addAction(new Notification.Action.Builder(null, "Matikan bubble", stop).build()).build();
+        notification = currentNotification();
         if (Build.VERSION.SDK_INT >= 34) startForeground(1, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
         else if (Build.VERSION.SDK_INT >= 29) startForeground(1, notification, 0);
         else startForeground(1, notification);
@@ -75,6 +79,30 @@ public final class BubbleService extends Service {
         showBubble();
         if (capture) connectCapture(intent);
         return START_NOT_STICKY;
+    }
+
+    private Notification currentNotification() {
+        var stop = PendingIntent.getService(this, 1, new Intent(this, BubbleService.class).setAction(STOP),
+            PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+        var open = PendingIntent.getActivity(this, 2, new Intent(this, MainActivity.class),
+            PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+        var builder = new Notification.Builder(this, CHANNEL).setSmallIcon(R.drawable.omni)
+            .setContentTitle("Omni Float AI").setContentText("Asisten mengambang aktif").setOngoing(true)
+            .setOnlyAlertOnce(true).setContentIntent(open);
+        if (assist != null && assist.running()) {
+            var pause = PendingIntent.getService(this, 3, new Intent(this, BubbleService.class).setAction(PAUSE),
+                PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+            String label = assist.paused() ? "Lanjutkan terjemah" : "Jeda terjemah";
+            builder.setContentText(assist.paused() ? "Terjemahan dijeda" : "Menerjemahkan layar")
+                .addAction(new Notification.Action.Builder(null, label, pause).build());
+        }
+        return builder.addAction(new Notification.Action.Builder(null, "Matikan bubble", stop).build()).build();
+    }
+
+    void refreshNotification() {
+        if (!started || shuttingDown) return;
+        notification = currentNotification();
+        getSystemService(NotificationManager.class).notify(1, notification);
     }
 
     private void connectCapture(Intent intent) {
@@ -127,6 +155,7 @@ public final class BubbleService extends Service {
     private void showBubble() {
         boolean wasOpen = panelOpen;
         panelOpen = false;
+        if (translation != null) translation.setVisibility(View.VISIBLE);
         var prefs = appearance(this);
         int size = Chat.dp(this, prefs.getInt("size", 56));
         var screen = getResources().getDisplayMetrics();
@@ -142,7 +171,7 @@ public final class BubbleService extends Service {
         bubble.setAlpha(discreet ? 0.12f : prefs.getInt("opacity", 100) / 100f);
         bubble.setPadding(0,0,0,0);
         bubble.setContentDescription("Buka chat Omni Float AI");
-        bubble.setOnLongClickListener(v -> { stopSelf(); return true; });
+        bubble.setOnLongClickListener(v -> { quickMenu(); return true; });
         int slop = ViewConfiguration.get(this).getScaledTouchSlop();
         bubble.setOnTouchListener(new View.OnTouchListener() {
             float downX, downY;
@@ -193,10 +222,10 @@ public final class BubbleService extends Service {
 
     private void showPanel() {
         panelOpen = true;
-        clearTranslation();
+        if (translation != null) translation.setVisibility(View.INVISIBLE);
         var metrics = getResources().getDisplayMetrics();
         var p = params(Math.min(Chat.dp(this, 410), metrics.widthPixels - Chat.dp(this, 16)),
-            Math.min(Chat.dp(this, 470), (int) (metrics.heightPixels * 0.76)),
+            Math.min(Chat.dp(this, 570), (int) (metrics.heightPixels * 0.78)),
             WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL | WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH);
         p.gravity = Gravity.CENTER;
         p.softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE;
@@ -206,18 +235,19 @@ public final class BubbleService extends Service {
         var panelSurface = Chat.shape(this, Chat.BG, 24);
         panelSurface.setStroke(Chat.dp(this, 2), 0xffd7bafa);
         shell.setBackground(panelSurface);
+        var top = new android.widget.LinearLayout(this);
+        top.setGravity(Gravity.CENTER_VERTICAL);
+        var heading = OmniUi.title(this, "Omni Float", 20);
+        heading.setPadding(Chat.dp(this, 8), 0, 0, 0);
+        top.addView(heading, new android.widget.LinearLayout.LayoutParams(0, -2, 1));
+        top.addView(Chat.button(this, "Minimalkan", false, this::showBubble));
+        shell.addView(top);
         var nav = new android.widget.LinearLayout(this);
         nav.addView(Chat.button(this, "Chatbot", !toolsTab, () -> { toolsTab = false; showPanel(); }),
             new android.widget.LinearLayout.LayoutParams(0, -2, 1));
         nav.addView(Chat.button(this, "Mode otomatis", toolsTab, () -> { toolsTab = true; showPanel(); }),
             new android.widget.LinearLayout.LayoutParams(0, -2, 1));
-        shell.addView(nav);
-        var actions = new android.widget.LinearLayout(this);
-        actions.addView(Chat.button(this, "Samaran", false, () -> { discreet = true; showBubble(); }),
-            new android.widget.LinearLayout.LayoutParams(0, -2, 1));
-        actions.addView(Chat.button(this, "Minimalkan", false, this::showBubble),
-            new android.widget.LinearLayout.LayoutParams(0, -2, 1));
-        shell.addView(actions);
+        OmniUi.addSpace(shell, nav, 7);
         android.widget.TextView currentResult = null;
         if (toolsTab) {
             var scroll = new android.widget.ScrollView(this);
@@ -226,36 +256,72 @@ public final class BubbleService extends Service {
             shell.addView(scroll, new android.widget.LinearLayout.LayoutParams(-1, 0, 1));
             currentResult = Chat.label(this, result, 15, Chat.INK);
             currentResult.setTextIsSelectable(true);
+            currentResult.setPadding(Chat.dp(this, 8), Chat.dp(this, 8), Chat.dp(this, 8), 0);
+            currentResult.setVisibility(result.isEmpty() ? View.GONE : View.VISIBLE);
             panel.addView(currentResult);
-            panel.addView(Chat.button(this, "Terjemah Kamera", true, () -> openTool(CameraTranslator.class, 0, "")));
-            panel.addView(Chat.button(this, "AI Smart Screen Vision", false, this::visionOptions));
-            panel.addView(Chat.button(this, "AI Study Mode", false, () -> openTool(Toolbox.class, 0, "")));
-            if (!visionText.isEmpty()) {
-                panel.addView(Chat.button(this, "Salin analisis", false, () -> Toolbox.copy(getApplicationContext(), visionText)));
-                panel.addView(Chat.button(this, "Pelajari isi layar", false, () -> openTool(Toolbox.class, 0, visionText)));
+
+            var capture = OmniUi.card(this, panel, "Layar & kamera");
+            OmniUi.toolRow(capture, assist.running() ? "Nonaktifkan Terjemah Layar" : "Aktifkan Terjemah Layar",
+                assist.paused() ? "Sedang dijeda" : "Terjemahan di atas aplikasi aktif", "Aa", this::toggleTranslation);
+            if (assist.running()) {
+                var row = new android.widget.LinearLayout(this);
+                OmniUi.rowButton(row, assist.locked() ? "Buka kunci hasil" : "Kunci hasil", false, () -> {
+                    assist.setLocked(!assist.locked());
+                    showBubble();
+                });
+                OmniUi.rowButton(row, assist.paused() ? "Lanjutkan" : "Jeda", false, () -> {
+                    assist.setPaused(!assist.paused());
+                    showBubble();
+                });
+                OmniUi.addSpace(capture, row, 7);
             }
-            panel.addView(Chat.label(this, "Terjemahan diproses di perangkat. Unduhan model pertama perlu internet.", 13, Chat.MUTED));
-            panel.addView(Chat.button(this, assist.ready() ? "Matikan akses layar" : "Izinkan akses layar", true, () -> {
+            OmniUi.toolRow(capture, "Terjemah Kamera", "Baca tulisan di sekitar", "◉", () -> openTool(CameraTranslator.class, 0, ""));
+            OmniUi.toolRow(capture, "AI Smart Screen Vision", "Kirim satu tangkapan layar untuk dianalisis", "◈", this::visionOptions);
+            if (!visionText.isEmpty()) {
+                var row = new android.widget.LinearLayout(this);
+                OmniUi.rowButton(row, "Salin analisis", false, () -> Toolbox.copy(this, visionText));
+                OmniUi.rowButton(row, "Pelajari isi layar", false, () -> openTool(Toolbox.class, 0, visionText));
+                OmniUi.addSpace(capture, row, 8);
+            }
+
+            var shortcuts = OmniUi.card(this, panel, "Ruang AI");
+            OmniUi.toolRow(shortcuts, "Terjemahkan teks dan foto", "", "Aa", () -> openTool(TextDesk.class, 0, ""));
+            OmniUi.toolRow(shortcuts, "AI Study Mode", "", "▤", () -> openTool(Toolbox.class, 0, ""));
+            OmniUi.toolRow(shortcuts, "Monitor koneksi", "", "▥", () -> openTool(Toolbox.class, 1, ""));
+
+            var quizCard = OmniUi.card(this, panel, "Kuis Chrome");
+            quizCard.addView(Chat.button(this, quizExpanded ? "Sembunyikan kontrol kuis" : "Tampilkan kontrol kuis", false,
+                () -> { quizExpanded = !quizExpanded; showPanel(); }));
+            if (quizExpanded) {
+                quizCard.addView(Chat.button(this, "Atur aksesibilitas untuk kuis Chrome", false, () ->
+                    startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))));
+                quizButton(quizCard, "Jawab 1 soal", 1, 60_000);
+                quizButton(quizCard, "Otomatis sampai akhir halaman", Integer.MAX_VALUE, 1_800_000);
+                quizButton(quizCard, "Otomatis 30 detik", Integer.MAX_VALUE, 30_000);
+                quizButton(quizCard, "Otomatis 30 menit", Integer.MAX_VALUE, 1_800_000);
+            }
+
+            var settings = OmniUi.card(this, panel, "Kontrol sesi");
+            settings.addView(Chat.button(this, assist.ready() ? "Matikan akses layar" : "Izinkan akses layar", false, () -> {
                 if (assist.ready()) {
                     vision.cancel();
                     assist.release(true);
                     screenStatus("Akses layar dimatikan.");
                     restorePanel();
                 } else {
+                    pendingVision = -1;
                     askForCapture(false);
                 }
             }));
-            panel.addView(Chat.button(this, assist.running() ? "Nonaktifkan Terjemah Layar" : "Aktifkan Terjemah Layar", true,
-                this::toggleTranslation));
-            panel.addView(Chat.button(this, "Atur aksesibilitas untuk kuis Chrome", false, () ->
-                startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))));
-            quizButton(panel, "Jawab 1 soal", 1, 60_000);
-            quizButton(panel, "Otomatis sampai akhir halaman", Integer.MAX_VALUE, 1_800_000);
-            quizButton(panel, "Otomatis 30 detik", Integer.MAX_VALUE, 30_000);
-            quizButton(panel, "Otomatis 30 menit", Integer.MAX_VALUE, 1_800_000);
-            panel.addView(Chat.button(this, fadeTransition ? "Transisi halus: aktif" : "Transisi halus: nonaktif", false,
+            settings.addView(Chat.button(this, fadeTransition ? "Transisi halus: aktif" : "Transisi halus: nonaktif", false,
                 () -> { fadeTransition = !fadeTransition; showPanel(); }));
-            panel.addView(Chat.button(this, "Stop generation", false, () -> { Chat.SESSION.stop(); quiz.cancel(); vision.cancel(); assist.stop(); restorePanel(); }));
+            settings.addView(Chat.button(this, "Stop generation", false, () -> {
+                Chat.SESSION.stop();
+                quiz.cancel();
+                vision.cancel();
+                assist.stop();
+                restorePanel();
+            }));
         } else {
             var panel = Chat.SESSION.panel(this, null, null, null);
             shell.addView(panel, new android.widget.LinearLayout.LayoutParams(-1, 0, 1));
@@ -287,8 +353,38 @@ public final class BubbleService extends Service {
                 if (assist.ready()) runVision(choice);
                 else { pendingVision = choice; askForCapture(false); }
             }).setNegativeButton("Batal", null).create();
-        menu.getWindow().setType(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY);
-        menu.show();
+        showDialog(menu);
+    }
+
+    private void quickMenu() {
+        var menu = new AlertDialog.Builder(this, R.style.OmniTheme).setTitle("Pintasan bubble")
+            .setItems(new String[]{"Terjemah Layar", "Terjemah Kamera", "Terjemah Teks", "Belajar", "Monitor koneksi",
+                "Atur bubble", "Redupkan bubble", "Matikan bubble"}, (dialog, choice) -> {
+                switch (choice) {
+                    case 0 -> toggleTranslation();
+                    case 1 -> openTool(CameraTranslator.class, 0, "");
+                    case 2 -> openTool(TextDesk.class, 0, "");
+                    case 3 -> openTool(Toolbox.class, 0, "");
+                    case 4 -> openTool(Toolbox.class, 1, "");
+                    case 5 -> openTool(Toolbox.class, 2, "");
+                    case 6 -> { discreet = true; showBubble(); }
+                    case 7 -> stopSelf();
+                }
+            }).setNegativeButton("Tutup", null).create();
+        showDialog(menu);
+    }
+
+    private void showDialog(AlertDialog dialog) {
+        if (activeDialog != null) activeDialog.dismiss();
+        activeDialog = dialog;
+        dialog.setOnDismissListener(d -> { if (activeDialog == dialog) activeDialog = null; });
+        dialog.getWindow().setType(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY);
+        try {
+            dialog.show();
+        } catch (WindowManager.BadTokenException | SecurityException error) {
+            activeDialog = null;
+            screenStatus("Panel tidak bisa ditampilkan. Periksa izin tampil di atas aplikasi.");
+        }
     }
 
     private void runVision(int mode) {
@@ -330,7 +426,9 @@ public final class BubbleService extends Service {
 
     boolean translationPaused() { return panelOpen; }
     boolean hasTranslation() { return translation != null; }
-    boolean translationCovers(float x, float y) { return translation != null && translation.covers(x, y); }
+    void restoreTranslationBackground(android.graphics.Bitmap frame, int displayWidth, int displayHeight) {
+        if (translation != null) translation.restoreBackground(frame, displayWidth, displayHeight, translationOpacity);
+    }
 
     void showBubbleForTranslation() { showBubble(); }
 
@@ -348,23 +446,32 @@ public final class BubbleService extends Service {
         }));
     }
 
-    void showTranslation(java.util.List<TranslationOverlay.Label> labels) {
-        clearTranslation();
-        if (panelOpen || labels.isEmpty()) return;
+    boolean showTranslation(java.util.List<TranslationOverlay.Label> labels) {
+        if (panelOpen || labels.isEmpty() || OmniUi.sameLabels(rendered, labels, 7)) return false;
+        if (translation != null) {
+            translation.setLabels(labels);
+            rendered = labels;
+            return true;
+        }
         var layer = new TranslationOverlay(this, labels);
         var layout = params(-1, -1, WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
             | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN);
         float maxOpacity = Build.VERSION.SDK_INT >= 31
             ? getSystemService(android.hardware.input.InputManager.class).getMaximumObscuringOpacityForTouch() : 0.8f;
-        layout.alpha = Math.max(0f, maxOpacity - 0.07f);
+        // Keep enough of the original pixel signal to avoid recognizing the overlay as a new page.
+        layout.alpha = Math.min(0.70f, Math.max(0f, maxOpacity - 0.09f));
         layout.setTitle("Omni Float Translation");
         if (Build.VERSION.SDK_INT >= 30) layout.setFitInsetsTypes(0);
         try {
             windows.addView(layer, layout);
             translation = layer;
+            translationOpacity = layout.alpha;
+            rendered = labels;
             showBubble();
+            return true;
         } catch (WindowManager.BadTokenException | SecurityException error) {
             screenStatus("Lapisan terjemah tidak bisa ditampilkan.");
+            return false;
         }
     }
 
@@ -373,6 +480,7 @@ public final class BubbleService extends Service {
             windows.removeViewImmediate(translation);
             translation = null;
         }
+        rendered = java.util.Collections.emptyList();
     }
 
     @Override public void onConfigurationChanged(android.content.res.Configuration config) {
@@ -387,7 +495,10 @@ public final class BubbleService extends Service {
 
     void screenStatus(String text) {
         result = text;
-        if (resultView != null) resultView.setText(text);
+        if (resultView != null) {
+            resultView.setText(text);
+            resultView.setVisibility(text.isEmpty() ? View.GONE : View.VISIBLE);
+        }
     }
 
     void restorePanel() {
@@ -397,6 +508,8 @@ public final class BubbleService extends Service {
 
     @Override public void onDestroy() {
         active = false;
+        shuttingDown = true;
+        if (activeDialog != null) activeDialog.dismiss();
         if (assist != null) assist.destroy();
         if (quiz != null) quiz.destroy();
         if (vision != null) vision.destroy();
@@ -406,7 +519,3 @@ public final class BubbleService extends Service {
         super.onDestroy();
     }
 }
-
-
-
-

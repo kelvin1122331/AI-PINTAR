@@ -33,78 +33,51 @@ public final class MainActivity extends Activity {
 
         var hero = Chat.column(this);
         hero.setPadding(pad, pad, pad, pad);
-        var fill = new android.graphics.drawable.GradientDrawable(
-            android.graphics.drawable.GradientDrawable.Orientation.TL_BR,
-            new int[]{0xff442079, 0xff7a40dd});
-        fill.setCornerRadius(Chat.dp(this, 26));
-        hero.setBackground(fill);
+        hero.setBackground(OmniUi.hero(this));
         var mark = new ImageView(this);
         mark.setImageResource(R.drawable.omni);
-        hero.addView(mark, new LinearLayout.LayoutParams(Chat.dp(this, 40), Chat.dp(this, 40)));
+        hero.addView(mark, new LinearLayout.LayoutParams(Chat.dp(this, 36), Chat.dp(this, 36)));
         var title = Chat.label(this, "Omni Float AI", 33, Chat.WHITE);
-        title.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
-        hero.addView(title);
-        hero.addView(Chat.label(this, "Asisten AI mengambang untuk layar Android.", 15, 0xfff1e6ff));
+        title.setTypeface(android.graphics.Typeface.create("sans-serif-medium", 0));
+        OmniUi.addSpace(hero, title, 7);
+        hero.addView(Chat.label(this, "Terjemahkan, baca layar, dan belajar.", 15, 0xfff1e6ff));
         root.addView(hero);
 
-        var floating = section(root, "Floating");
-        floatingStatus = Chat.label(this, "", 14, Chat.MUTED);
-        floating.addView(floatingStatus);
+        var floating = OmniUi.card(this, root, "Asisten mengambang");
+        floatingStatus = OmniUi.caption(this, "");
+        OmniUi.addSpace(floating, floatingStatus, 4);
         var controls = new LinearLayout(this);
-        addControl(controls, "Aktifkan floating", true, this::activate);
-        addControl(controls, "Matikan", false, () -> {
+        OmniUi.rowButton(controls, "Aktifkan floating", true, this::activate);
+        OmniUi.rowButton(controls, "Matikan", false, () -> {
             stopService(new Intent(this, BubbleService.class));
             scheduleStatus();
         });
-        floating.addView(controls);
+        OmniUi.addSpace(floating, controls, 11);
 
-        var api = section(root, "Pengaturan API");
-        apiStatus = Chat.label(this, "", 14, Chat.MUTED);
-        api.addView(apiStatus);
-        var apiControls = new LinearLayout(this);
-        addControl(apiControls, "Masukkan API key", false, this::configure);
-        api.addView(apiControls);
+        var tools = OmniUi.card(this, root, "Ruang AI");
+        OmniUi.toolRow(tools, "Terjemahan", "Teks, foto, riwayat, dan bahasa overlay", "Aa",
+            () -> startActivity(new Intent(this, TextDesk.class)));
+        OmniUi.toolRow(tools, "Kamera", "Terjemah langsung dari pratinjau kamera", "◉",
+            () -> startActivity(new Intent(this, CameraTranslator.class)));
+        OmniUi.toolRow(tools, "Belajar", "Catatan, latihan, dan kartu ulasan", "▤", () -> openTool(0));
 
-        var tools = section(root, "Ruang AI");
-        var toolsRow = new LinearLayout(this);
-        addControl(toolsRow, "Kamera", true, () -> startActivity(new Intent(this, CameraTranslator.class)));
-        addControl(toolsRow, "Belajar", false, () -> startActivity(new Intent(this, Toolbox.class)));
-        tools.addView(toolsRow);
-        var settingsRow = new LinearLayout(this);
-        addControl(settingsRow, "Monitor koneksi", false, () -> openTool(1));
-        addControl(settingsRow, "Atur bubble", false, () -> openTool(2));
-        tools.addView(settingsRow);
-        var platforms = section(root, "Platform kuis");
-        platforms.addView(Chat.label(this, "Quizizz / Wayground · Kahoot! · Google Forms · Microsoft Forms · Socrative · Nearpod · Blooket · Wordwall", 14, Chat.INK));
-        var note = Chat.label(this, "Mode soal di Chrome untuk opsi pilihan tunggal yang dapat dibaca Aksesibilitas. Kompatibilitas tiap kuis dapat berbeda.", 13, Chat.MUTED);
-        note.setPadding(0, Chat.dp(this, 8), 0, 0);
-        platforms.addView(note);
+        var api = OmniUi.card(this, root, "Pengaturan");
+        apiStatus = OmniUi.caption(this, "");
+        OmniUi.addSpace(api, apiStatus, 4);
+        OmniUi.toolRow(api, "Masukkan API key", "Pilih penyedia dan model AI", "⚙", this::configure);
+        OmniUi.toolRow(api, "Monitor koneksi", "Latensi, status, dan penggunaan token", "▥", () -> openTool(1));
+        OmniUi.toolRow(api, "Atur bubble", "Ukuran, tepian, dan transparansi", "◌", () -> openTool(2));
 
+        var platforms = OmniUi.card(this, root, "");
+        var platformNames = OmniUi.caption(this, "Quizizz / Wayground · Kahoot! · Google Forms · Microsoft Forms · Socrative · Nearpod · Blooket · Wordwall. Kompatibilitas bergantung pada opsi yang dapat dibaca Chrome.");
+        platformNames.setVisibility(android.view.View.GONE);
+        platforms.addView(Chat.button(this, "Platform kuis", false, () -> {
+            boolean open = platformNames.getVisibility() == android.view.View.VISIBLE;
+            platformNames.setVisibility(open ? android.view.View.GONE : android.view.View.VISIBLE);
+        }));
+        OmniUi.addSpace(platforms, platformNames, 7);
         setContentView(scroll);
         updateStatus();
-    }
-
-    private LinearLayout section(LinearLayout root, String title) {
-        var card = Chat.column(this);
-        int pad = Chat.dp(this, 16);
-        card.setPadding(pad, pad, pad, pad);
-        var surface = Chat.shape(this, Chat.WHITE, 20);
-        surface.setStroke(Chat.dp(this, 1), 0xffe9def8);
-        card.setBackground(surface);
-        var header = Chat.label(this, title, 19, Chat.INK);
-        header.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
-        card.addView(header);
-        var params = new LinearLayout.LayoutParams(-1, -2);
-        params.topMargin = Chat.dp(this, 14);
-        root.addView(card, params);
-        return card;
-    }
-
-    private void addControl(LinearLayout row, String title, boolean primary, Runnable action) {
-        var params = new LinearLayout.LayoutParams(0, Chat.dp(this, 48), primary ? 1.5f : 1f);
-        params.topMargin = Chat.dp(this, 10);
-        if (row.getChildCount() > 0) params.leftMargin = Chat.dp(this, 8);
-        row.addView(Chat.button(this, title, primary, action), params);
     }
 
     @Override protected void onResume() {
@@ -120,7 +93,7 @@ public final class MainActivity extends Activity {
         String model = Providers.prefs(this).getString("model" + provider, "");
         apiStatus.setText(model.isEmpty() ? "Pilih provider dan model untuk mulai chat."
             : Providers.NAMES[provider] + " / " + (Providers.AUTO.equals(model) ? "Otomatis" : model));
-        floatingStatus.setText(BubbleService.active ? "Bubble aktif" : "Bubble nonaktif");
+        floatingStatus.setText(BubbleService.active ? "Aktif · ketuk bubble untuk membuka alat" : "Nonaktif · nyalakan untuk memakai alat di atas layar");
     }
 
     private void activate() {
@@ -155,5 +128,3 @@ public final class MainActivity extends Activity {
         new ApiSettings(this, this::updateStatus).show();
     }
 }
-
-

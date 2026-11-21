@@ -26,6 +26,7 @@ public final class CameraTranslator extends ComponentActivity {
     private boolean torch;
     private boolean processing;
     private int revision;
+    private int emptyFrames;
     private TranslationOverlay layer;
     private java.util.List<TranslationOverlay.Label> last = java.util.Collections.emptyList();
 
@@ -113,19 +114,30 @@ public final class CameraTranslator extends ComponentActivity {
         }
         processing = true;
         int ticket = revision;
-        translator.translate(bitmap, status::setText, result -> {
+        translator.translate(bitmap, TranslationPreferences.source(this), TranslationPreferences.target(this),
+            status::setText, result -> {
             processing = false;
             if (isDestroyed()) return;
             if (ticket == revision && !paused && hasWindowFocus()) {
-                if (layer != null) frame.removeView(layer);
-                layer = null;
-                last = result.labels();
-                if (!last.isEmpty()) {
-                    layer = new TranslationOverlay(this, last);
-                    frame.addView(layer, new FrameLayout.LayoutParams(-1, -1));
+                if (!result.labels().isEmpty()) {
+                    emptyFrames = 0;
+                    if (!OmniUi.sameLabels(last, result.labels(), 8)) {
+                        last = result.labels();
+                        if (layer == null) {
+                            layer = new TranslationOverlay(this, last);
+                            frame.addView(layer, new FrameLayout.LayoutParams(-1, -1));
+                        } else {
+                            layer.setLabels(last);
+                        }
+                    }
+                } else if (result.error() == null && ++emptyFrames >= 3 && layer != null) {
+                    frame.removeView(layer);
+                    layer = null;
+                    last = java.util.Collections.emptyList();
                 }
                 status.setText(result.error() != null ? result.error() : last.isEmpty()
-                    ? "Arahkan kamera ke tulisan asing yang jelas." : "Terjemahan Bahasa Indonesia");
+                    ? "Arahkan kamera ke tulisan yang jelas."
+                    : "Terjemahan · " + TranslationPreferences.name(TranslationPreferences.target(this)));
             }
             schedule(result.error() == null ? 850 : 3500);
         });

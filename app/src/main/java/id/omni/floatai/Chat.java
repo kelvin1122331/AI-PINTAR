@@ -12,8 +12,8 @@ import org.json.JSONObject;
 import java.util.concurrent.Executors;
 
 final class Chat {
-    static final int BG = 0xfffffbff, CARD = 0xfff0e9fc, INK = 0xff26163e,
-        MUTED = 0xff655775, PURPLE = 0xff632fc2, ORANGE = 0xffff985b, WHITE = 0xffffffff;
+    static final int BG = 0xfff8f6fc, CARD = 0xffeee8f8, INK = 0xff251b35,
+        MUTED = 0xff645b71, PURPLE = 0xff58349e, ORANGE = 0xffffaf72, WHITE = 0xffffffff;
     static final long DEADLINE_MS = 55_000;
     static final Chat SESSION = new Chat();
     private final Handler ui = new Handler(Looper.getMainLooper());
@@ -247,6 +247,3 @@ final class Chat {
         return root;
     }
 }
-
-
-

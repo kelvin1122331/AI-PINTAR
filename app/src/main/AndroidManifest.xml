@@ -7,6 +7,9 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION"/>
     <uses-permission android:name="android.permission.CAMERA"/>
     <uses-feature android:name="android.hardware.camera.any" android:required="false"/>
+    <queries>
+        <intent><action android:name="android.intent.action.TTS_SERVICE"/></intent>
+    </queries>
     <application android:allowBackup="false" android:usesCleartextTraffic="false" android:theme="@style/OmniTheme" android:label="Omni Float AI" android:icon="@drawable/omni">
         <activity android:name=".MainActivity" android:exported="true" android:windowSoftInputMode="adjustResize">
             <intent-filter>
@@ -16,8 +19,9 @@
         </activity>
         <activity android:name=".CameraTranslator" android:exported="false"/>
         <activity android:name=".Toolbox" android:exported="false"/>
+        <activity android:name=".TextDesk" android:exported="false"/>
         <activity android:name=".CaptureConsent" android:exported="false" android:excludeFromRecents="true" android:taskAffinity="id.omni.floatai.capture" android:theme="@android:style/Theme.Translucent.NoTitleBar"/>
-        <service android:name=".QuizAccessibility" android:label="Omni Float AI ? Pilih opsi kuis"
+        <service android:name=".QuizAccessibility" android:label="Omni Float AI · Pilih opsi kuis"
             android:exported="true" android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
             <intent-filter><action android:name="android.accessibilityservice.AccessibilityService"/></intent-filter>
             <meta-data android:name="android.accessibilityservice" android:resource="@xml/quiz_accessibility"/>
@@ -27,7 +31,3 @@
         </service>
     </application>
 </manifest>
-
-
-
-

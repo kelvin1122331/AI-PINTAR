@@ -11,6 +11,7 @@ permissions:
 jobs:
   apk:
     runs-on: ubuntu-latest
+    timeout-minutes: 18
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -20,18 +21,40 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
-      - run: gradle --no-daemon :app:assembleDebug
+      - run: gradle --no-daemon :app:assembleDebug :app:assembleDebugAndroidTest
+      - name: Enable emulator KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
+          script: |
+            adb install -g app/build/outputs/apk/debug/app-x86_64-debug.apk
+            adb install app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+            adb shell am instrument -w id.omni.floatai.test/id.omni.floatai.SmokeInstrumentation | tee /tmp/omni-instrumentation.txt
+            adb logcat -d -s OmniSmoke:I
+            grep -q OMNI_SMOKE_PASS /tmp/omni-instrumentation.txt
+            python3 -u tools/android-smoke.py
       - name: Verify and name the APK
         run: |
-          APK=app/build/outputs/apk/debug/app-debug.apk
           SIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -1)
-          "$SIGNER" verify "$APK"
-          cp "$APK" Omni_Float_AI.apk
-          sha256sum Omni_Float_AI.apk
+          for ABI in arm64-v8a universal; do
+            APK="app/build/outputs/apk/debug/app-$ABI-debug.apk"
+            "$SIGNER" verify "$APK"
+            cp "$APK" "Omni_Float_AI_$ABI.apk"
+          done
+          sha256sum Omni_Float_AI_*.apk
       - uses: actions/upload-artifact@v4
         with:
           name: Omni-Float-AI-APK
-          path: Omni_Float_AI.apk
+          path: Omni_Float_AI_*.apk
           if-no-files-found: error
       - name: Publish signed APK download
         if: github.ref == 'refs/heads/main'
@@ -41,9 +64,10 @@ jobs:
           version=$(sed -n "s/.*versionName '\([^']*\)'.*/\1/p" app/build.gradle)
           tag="omni-float-v$version"
           asset="Omni_Float_AI_v$version.apk"
-          cp Omni_Float_AI.apk "$asset"
+          cp Omni_Float_AI_arm64-v8a.apk "$asset"
+          cp Omni_Float_AI_universal.apk "Omni_Float_AI_v$version-universal.apk"
           if gh release view "$tag" >/dev/null 2>&1; then
             echo "Release $tag already exists."
           else
-            gh release create "$tag" "$asset" --target "$GITHUB_SHA" --title "Omni Float AI $version" --notes "APK Android dengan kamera terjemah, Screen Vision, Study Mode, dan monitor koneksi."
+            gh release create "$tag" "$asset" "Omni_Float_AI_v$version-universal.apk" --target "$GITHUB_SHA" --title "Omni Float AI $version" --notes "APK ARM64 dan universal. Terjemahan stabil dan alat terjemah, belajar, serta diagnostik baru."
           fi
