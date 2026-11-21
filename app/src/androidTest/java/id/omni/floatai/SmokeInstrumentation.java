@@ -147,6 +147,8 @@ public class SmokeInstrumentation extends Instrumentation {
             try {
                 var layer = new TranslationOverlay(context, java.util.Collections.singletonList(
                     new TranslationOverlay.Label(250, 420, 500, 90, "Selamat pagi dan selamat datang")));
+                layer.measure(android.view.View.MeasureSpec.makeMeasureSpec(800, android.view.View.MeasureSpec.EXACTLY),
+                    android.view.View.MeasureSpec.makeMeasureSpec(400, android.view.View.MeasureSpec.EXACTLY));
                 layer.layout(0, 0, 800, 400);
                 var frame = Bitmap.createBitmap(800, 400, Bitmap.Config.ARGB_8888);
                 var canvas = new Canvas(frame);
@@ -154,13 +156,20 @@ public class SmokeInstrumentation extends Instrumentation {
                 int save = canvas.saveLayerAlpha(0, 0, 800, 400, 179);
                 layer.draw(canvas);
                 canvas.restoreToCount(save);
-                int visible = frame.getPixel(209, 175);
-                require(visible != 0xffffffff, "translation draws actual overlay pixels");
+                var sample = new int[800 * 400];
+                frame.getPixels(sample, 0, 800, 0, 0, 800, 400);
+                int colored = 0;
+                for (int pixel : sample) if (pixel != 0xffffffff) colored++;
+                require(colored > 1000, "translation draws visible overlay pixels: " + colored);
                 layer.restoreBackground(frame, 800, 400, .70f);
-                int restored = frame.getPixel(209, 175);
+                int recovered = 0;
+                for (int i = 0; i < sample.length; i++) {
+                    if (sample[i] == 0xffffffff) continue;
+                    int restored = frame.getPixel(i % 800, i / 800);
+                    if (((restored >> 16) & 255) >= 245 && ((restored >> 8) & 255) >= 245) recovered++;
+                }
                 frame.recycle();
-                require(((restored >> 16) & 255) >= 245 && ((restored >> 8) & 255) >= 245,
-                    "translation overlay pixels are restored for the next OCR frame");
+                require(recovered >= colored * .90f, "translation restores the background for OCR: " + recovered + " of " + colored);
             } catch (Throwable error) {
                 drawFailure.set(error);
             }
