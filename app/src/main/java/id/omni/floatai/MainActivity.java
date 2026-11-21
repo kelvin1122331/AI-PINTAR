@@ -2,14 +2,12 @@ package id.omni.floatai;
 
 import android.Manifest;
 import android.app.Activity;
-import android.app.AlertDialog;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.provider.Settings;
-import android.text.InputType;
 import android.view.WindowInsets;
 import android.widget.*;
 
@@ -63,65 +61,7 @@ public final class MainActivity extends Activity {
         if (request == 2 && Settings.canDrawOverlays(this)) activate();
     }
 
-    private EditText field(LinearLayout parent, String title, int type) {
-        parent.addView(Chat.label(this, title, 13, Chat.MUTED));
-        var edit = new EditText(this);
-        edit.setSingleLine(true);
-        edit.setInputType(type);
-        parent.addView(edit);
-        return edit;
-    }
-
     private void configure() {
-        var form = Chat.column(this);
-        int pad = Chat.dp(this, 20);
-        form.setPadding(pad, pad, pad, pad);
-        var provider = new Spinner(this);
-        var adapter = new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, Providers.NAMES);
-        provider.setAdapter(adapter);
-        form.addView(provider);
-        var endpoint = field(form, "URL chat completions", InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
-        var model = field(form, "ID model dari provider", InputType.TYPE_CLASS_TEXT);
-        var key = field(form, "API key", InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
-        var hint = Chat.label(this, "", 13, Chat.MUTED);
-        form.addView(hint);
-        int initial = Providers.active(this);
-        provider.setSelection(initial);
-        provider.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
-            public void onNothingSelected(AdapterView<?> view) {}
-            public void onItemSelected(AdapterView<?> view, android.view.View item, int position, long id) {
-                try {
-                    Providers.Profile profile = Providers.load(MainActivity.this, position);
-                    endpoint.setText(profile.endpoint());
-                    model.setText(profile.model());
-                    key.setText(profile.key());
-                    hint.setText("Pesan dikirim ke endpoint HTTPS yang kamu simpan.");
-                } catch (Exception exception) {
-                    endpoint.setText(Providers.ENDPOINTS[position]);
-                    model.setText("");
-                    key.setText("");
-                    hint.setText("Simpan ulang API key untuk profil ini.");
-                }
-            }
-        });
-        var scroll = new ScrollView(this);
-        scroll.addView(form);
-        var dialog = new AlertDialog.Builder(this).setTitle("Pengaturan API").setView(scroll)
-            .setPositiveButton("Simpan & pakai", null).setNegativeButton("Batal", null).create();
-        dialog.getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE);
-        dialog.show();
-        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(view -> {
-            try {
-                int index = provider.getSelectedItemPosition();
-                Providers.save(this, index, new Providers.Profile(endpoint.getText().toString().trim(),
-                    model.getText().toString().trim(), key.getText().toString().trim()));
-                Chat.SESSION.clear();
-                dialog.dismiss();
-            } catch (IllegalArgumentException exception) {
-                hint.setText(exception.getMessage());
-            } catch (Exception exception) {
-                hint.setText("URL atau penyimpanan API key bermasalah. Cek kembali pengaturan.");
-            }
-        });
+        new ApiSettings(this).show();
     }
 }

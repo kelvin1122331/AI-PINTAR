@@ -20,6 +20,7 @@ final class Chat {
     private int generation;
     private boolean busy;
     private String error = "";
+    private String lastModel = "";
     private final java.util.Set<Runnable> observers = new java.util.HashSet<>();
 
     static int dp(Context c, int value) { return Math.round(value * c.getResources().getDisplayMetrics().density); }
@@ -54,7 +55,7 @@ final class Chat {
     }
 
     void refresh() { for (Runnable observer : observers.toArray(new Runnable[0])) observer.run(); }
-    void clear() { generation++; history = new JSONArray(); error = ""; busy = false; refresh(); }
+    void clear() { generation++; history = new JSONArray(); error = ""; lastModel = ""; busy = false; refresh(); }
 
     private boolean send(Context context, String prompt) {
         if (busy || prompt.isEmpty()) return false;
@@ -62,7 +63,7 @@ final class Chat {
         try {
             Providers.Profile profile = Providers.load(app, Providers.active(app));
             if (profile.model().trim().isEmpty()) {
-                error = "Atur provider dan ID model di aplikasi terlebih dulu.";
+                error = "Atur API dan pilih mode model terlebih dulu.";
                 refresh();
                 return false;
             }
@@ -72,16 +73,18 @@ final class Chat {
             }
             request.put(new JSONObject().put("role", "user").put("content", prompt));
             int ticket = generation;
+            String previousModel = lastModel;
             busy = true;
             error = "";
             refresh();
             worker.execute(() -> {
                 try {
-                    String answer = Providers.complete(profile, request);
-                    var reply = new JSONObject().put("role", "assistant").put("content", answer);
+                    Providers.Answer answer = Providers.complete(profile, request, previousModel);
+                    var reply = new JSONObject().put("role", "assistant").put("content", answer.text());
                     ui.post(() -> {
                         if (ticket != generation) return;
                         history = request.put(reply);
+                        lastModel = answer.model();
                         busy = false;
                         refresh();
                     });
@@ -144,7 +147,10 @@ final class Chat {
         composer.addView(send);
         root.addView(composer);
         Runnable render = () -> {
-            status.setText(Providers.NAMES[Providers.active(c)]);
+            int provider = Providers.active(c);
+            String model = Providers.prefs(c).getString("model" + provider, "");
+            if (Providers.AUTO.equals(model)) model = lastModel.isEmpty() ? "Otomatis" : "Otomatis · " + lastModel;
+            status.setText(Providers.NAMES[provider] + (model.isEmpty() ? "" : "  ·  " + model));
             feedback.setText(busy ? "Menunggu jawaban." : error);
             feedback.setVisibility(busy || !error.isEmpty() ? View.VISIBLE : View.GONE);
             send.setEnabled(!busy);
