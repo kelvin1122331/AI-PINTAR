@@ -28,7 +28,12 @@ def tap(label):
     tap_node(item)
 
 def require(label):
-    assert node(label) is not None, f'Missing UI: {label}'
+    if node(label) is None:
+        labels = [item.get('text') or item.get('content-desc') for item in nodes()
+                  if item.get('text') or item.get('content-desc')]
+        focus = adb('shell', 'dumpsys', 'activity', 'activities')
+        focus_lines = [line.strip() for line in focus.splitlines() if 'ResumedActivity' in line]
+        raise AssertionError(f'Missing UI: {label}; visible: {labels}; foreground: {focus_lines}')
     print(f'PASS UI {label}', flush=True)
 
 def scroll():
@@ -58,7 +63,8 @@ def reveal(label):
     raise AssertionError('Missing UI: ' + label)
 
 def open_activity():
-    adb('shell', 'am', 'start', '-W', '-n', APP)
+    launched = adb('shell', 'am', 'start', '-S', '-W', '-n', APP)
+    print('Launch app:', launched, flush=True)
     require('Omni Float AI')
 
 def bubble():
@@ -100,7 +106,12 @@ def fixture_labels():
     return [item.get('text') for item in nodes() if 'Good morning' in (item.get('text') or '')
         or 'Thank you for reading' in (item.get('text') or '')]
 
-# Earlier instrumentation used private fake credentials. Start the runtime UI test clean.
+# Keep the emulator awake during the full workflow, including the model download.
+adb('shell', 'svc', 'power', 'stayon', 'true')
+adb('shell', 'settings', 'put', 'system', 'screen_off_timeout', '1800000')
+adb('shell', 'input', 'keyevent', 'KEYCODE_WAKEUP')
+adb('shell', 'wm', 'dismiss-keyguard')
+# Start the UI test with no model profile or app preferences.
 adb('shell', 'pm', 'clear', PACKAGE)
 adb('shell', 'pm', 'grant', PACKAGE, 'android.permission.CAMERA')
 adb('shell', 'pm', 'grant', PACKAGE, 'android.permission.POST_NOTIFICATIONS')
@@ -143,8 +154,10 @@ assert before, 'English fixture did not open'
 bubble()
 tap('Mode otomatis')
 tap_node(reveal('Aktifkan Terjemah Layar'))
-tap('Start')
-first = wait_overlay(65)
+start_button = node('Start', 1) or node('Start now', 1)
+assert start_button is not None, 'Screen capture confirmation did not appear'
+tap_node(start_button)
+first = wait_overlay(70)
 for _ in range(9):
     visible = annotation_pixels()
     assert visible >= first * .55, ('Overlay flickered on a stable page', first, visible)
