@@ -1,4 +1,4 @@
-name: Verify delivered Omni Float APK
+name: Verify Omni Float 2.0 tools
 on:
   push:
     branches: [verify-omni-v13]
@@ -10,61 +10,24 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 18
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v4
         with:
-          name: Omni-Float-AI-APK
-          run-id: '44943479966'
-          github-token: ${{ github.token }}
-      - name: Verify exact delivered APK
-        run: |
-          echo '38666f84174194f79e6e18f41ae7bcbcfabc68996aab6d1ef0ffc9c06f3b40c3  Omni_Float_AI.apk' | sha256sum -c -
+          ref: 6c2cdcf30e0565cd3fc916e3598e9e6b947dc503
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - run: |
+          gradle --no-daemon :app:assembleDebug
+          cp app/build/outputs/apk/debug/app-debug.apk Omni_Float_AI.apk
       - name: Enable emulator KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
-      - name: Build a scrollable English test screen
-        run: |
-          mkdir -p /tmp/omnifixture/classes /tmp/omnifixture/dex
-          cd /tmp/omnifixture
-          cat > AndroidManifest.xml <<'XML'
-          <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="id.omni.fixture">
-            <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="35"/>
-            <application android:theme="@android:style/Theme.Material.Light.NoActionBar">
-              <activity android:name=".Fixture" android:exported="true"/>
-            </application>
-          </manifest>
-          XML
-          cat > Fixture.java <<'JAVA'
-          package id.omni.fixture;
-          public class Fixture extends android.app.Activity {
-              public void onCreate(android.os.Bundle state) {
-                  super.onCreate(state);
-                  var scroll = new android.widget.ScrollView(this);
-                  var list = new android.widget.LinearLayout(this);
-                  list.setOrientation(1);
-                  list.setPadding(32, 90, 32, 80);
-                  for (int index = 1; index <= 30; index++) {
-                      var text = new android.widget.TextView(this);
-                      text.setText(index + ". " + (index % 2 == 0 ? "Thank you for reading this message." : "Good morning, how are you today?"));
-                      text.setTextColor(0xff111111);
-                      text.setTextSize(22);
-                      text.setPadding(0, 22, 0, 110);
-                      list.addView(text);
-                  }
-                  scroll.addView(list);
-                  setContentView(scroll);
-              }
-          }
-          JAVA
-          jars="$ANDROID_HOME/platforms/android-35/android.jar"
-          build=$(dirname "$(find "$ANDROID_HOME/build-tools" -name aapt2 | sort -V | tail -1)")
-          javac --release 17 -cp "$jars" -d classes Fixture.java
-          "$build/d8" --min-api 26 --lib "$jars" --output dex classes/id/omni/fixture/Fixture.class
-          "$build/aapt2" link --manifest AndroidManifest.xml -I "$jars" -o fixture-unsigned.apk
-          zip -j fixture-unsigned.apk dex/classes.dex
-          keytool -genkeypair -noprompt -keystore fixture.jks -storepass android -alias fixture -keypass android -keyalg RSA -validity 2 -dname CN=Fixture
-          "$build/apksigner" sign --ks fixture.jks --ks-pass pass:android --out /tmp/omni-fixture.apk fixture-unsigned.apk
       - name: Write Android UI checks
         run: |
           cat > /tmp/verify_omni.py <<'PY'
@@ -108,79 +71,40 @@ jobs:
 
           package = 'id.omni.floatai'
           print(adb('install', '-g', 'Omni_Float_AI.apk'))
-          assert 'versionName=1.5.1' in adb('shell', 'dumpsys', 'package', package)
+          assert 'versionName=2.0' in adb('shell', 'dumpsys', 'package', package)
           adb('shell', 'appops', 'set', package, 'SYSTEM_ALERT_WINDOW', 'allow')
           adb('shell', 'am', 'start', '-W', '-n', package + '/.MainActivity')
           require('Omni Float AI')
           require('Aktifkan floating')
-          require('Platform kuis')
-          tap('Masukkan API key')
-          require('Pengaturan API')
-          require('API key')
-          require('Muat ulang model')
-          require('Pilih model')
-          save = node('Simpan & pakai',1)
-          assert save is None or save.get('enabled') == 'false'
-          print('PASS empty API key cannot save profile', flush=True)
-          tap('Batal')
-          tap('Aktifkan floating')
-          service = adb('shell','dumpsys','activity','services',package)
-          assert 'BubbleService' in service and 'isForeground=true' in service
-          print('PASS foreground bubble service', flush=True)
-          adb('install', '/tmp/omni-fixture.apk')
-          adb('shell','am','start','-W','-n','id.omni.fixture/.Fixture')
-          time.sleep(1)
+          def reveal(label):
+              for _ in range(5):
+                  item = node(label,1)
+                  if item is not None: return item
+                  scroll()
+              raise AssertionError('Missing UI: ' + label)
 
-          def open_bubble():
-              bubble = node('Buka chat Omni Float AI',1) or node('AI',1)
-              if bubble is not None:
-                  tap_node(bubble)
-              else:
-                  density = int(re.findall(r'(\d+)',adb('shell','wm','density'))[-1])/160
-                  for y in (153,177,195):
-                      adb('shell','input','tap',str(round(44*density)),str(round(y*density)))
-                      if node('Mode otomatis',1) is not None: break
-              require('Mode otomatis')
-
-          def window_counts():
-              dump = adb('shell', 'dumpsys', 'window', 'windows')
-              return len([l for l in dump.splitlines() if 'Window #' in l and 'Omni Float Translation' in l])
-
-          open_bubble()
-          tap('Mode otomatis')
-          tap('Aktifkan Terjemah Layar')
-          require('Start')
-          tap('Start')
-          time.sleep(2)
-          until = time.monotonic() + 95
-          while time.monotonic() < until:
-              if window_counts() >= 1: break
-              time.sleep(1)
-          else:
-              open_bubble()
-              print('Overlay UI:', [n.get('text') for n in nodes() if n.get('text')], flush=True)
-              raise AssertionError('Translation window was not drawn.')
-          print('PASS real screen capture creates translation overlay', flush=True)
-          before = [n.get('text') for n in nodes() if 'for reading' in (n.get('text') or '') or 'Good morning' in (n.get('text') or '')]
-          assert before, 'English fixture did not regain focus after screen permission'
-          print('PASS source app stays visible after consent', flush=True)
-          scroll()
-          time.sleep(2)
-          after = [n.get('text') for n in nodes() if 'for reading' in (n.get('text') or '') or 'Good morning' in (n.get('text') or '')]
-          assert before != after, 'Underlying page did not scroll'
-          until = time.monotonic() + 20
-          while time.monotonic() < until:
-              if window_counts() >= 1: break
-              time.sleep(1)
-          else:
-              raise AssertionError('Translation overlay did not return after scroll')
-          print('PASS page scroll works with translation overlay', flush=True)
-          open_bubble()
-          tap('Nonaktifkan Terjemah Layar')
-          require('Terjemah nonaktif.')
-          require('Aktifkan Terjemah Layar')
-          assert window_counts() == 0, 'Translation window remains after toggle off'
-          print('PASS translation toggles off with the same control', flush=True)
+          tap_node(reveal('Belajar'))
+          require('AI Study Mode')
+          require('Jenis bantuan')
+          require('Panjang respons')
+          tap('Buat')
+          require('Isi materi terlebih dulu.')
+          tap('Koneksi')
+          require('AI Connection Monitor')
+          tap('Tes koneksi AI')
+          require('Atur model dan API key terlebih dulu.')
+          tap('Bubble')
+          require('Smart Floating Bubble')
+          tap('Tempel otomatis ke tepi')
+          adb('shell','input','keyevent','KEYCODE_BACK')
+          adb('shell','am','start','-n',package+'/.CameraTranslator')
+          require('Terjemah Kamera')
+          require('Jeda')
+          require('Senter')
+          require('Salin')
+          tap('Jeda')
+          require('Lanjut')
+          print('PASS camera controls, Study, monitor, and bubble settings', flush=True)
           PY
       - uses: reactivecircus/android-emulator-runner@v2
         with:
