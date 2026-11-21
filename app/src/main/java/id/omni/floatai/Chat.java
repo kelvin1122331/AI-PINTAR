@@ -15,10 +15,11 @@ final class Chat {
     static final int BG = 0xff101923, CARD = 0xff1b2935, WHITE = 0xffecf5fc, MUTED = 0xffafc1ce, MINT = 0xff52e1c3;
     static final Chat SESSION = new Chat();
     private final Handler ui = new Handler(Looper.getMainLooper());
-    private final java.util.concurrent.Executor worker = Executors.newSingleThreadExecutor();
+    private final java.util.concurrent.ExecutorService worker = Executors.newCachedThreadPool();
     private JSONArray history = new JSONArray();
     private int generation;
     private boolean busy;
+    private java.util.concurrent.Future<?> task;
     private String error = "";
     private String lastModel = "";
     private final java.util.Set<Runnable> observers = new java.util.HashSet<>();
@@ -55,7 +56,14 @@ final class Chat {
     }
 
     void refresh() { for (Runnable observer : observers.toArray(new Runnable[0])) observer.run(); }
-    void clear() { generation++; history = new JSONArray(); error = ""; lastModel = ""; busy = false; refresh(); }
+    void stop() {
+        generation++;
+        if (task != null) task.cancel(true);
+        task = null;
+        busy = false;
+        refresh();
+    }
+    void clear() { history = new JSONArray(); error = ""; lastModel = ""; stop(); }
 
     private boolean send(Context context, String prompt) {
         if (busy || prompt.isEmpty()) return false;
@@ -77,7 +85,7 @@ final class Chat {
             busy = true;
             error = "";
             refresh();
-            worker.execute(() -> {
+            task = worker.submit(() -> {
                 try {
                     Providers.Answer answer = Providers.complete(profile, request, previousModel);
                     var reply = new JSONObject().put("role", "assistant").put("content", answer.text());
@@ -125,6 +133,8 @@ final class Chat {
         var spacer = new LinearLayout.LayoutParams(-1, -2);
         spacer.topMargin = dp(c, 10);
         root.addView(controls, spacer);
+        var stop = button(c, "Stop generation", false, this::stop);
+        root.addView(stop);
 
         var scroll = new ScrollView(c);
         var transcript = column(c);
@@ -149,11 +159,12 @@ final class Chat {
         Runnable render = () -> {
             int provider = Providers.active(c);
             String model = Providers.prefs(c).getString("model" + provider, "");
-            if (Providers.AUTO.equals(model)) model = lastModel.isEmpty() ? "Otomatis" : "Otomatis · " + lastModel;
-            status.setText(Providers.NAMES[provider] + (model.isEmpty() ? "" : "  ·  " + model));
+            if (Providers.AUTO.equals(model)) model = lastModel.isEmpty() ? "Otomatis" : "Otomatis � " + lastModel;
+            status.setText(Providers.NAMES[provider] + (model.isEmpty() ? "" : "  �  " + model));
             feedback.setText(busy ? "Menunggu jawaban." : error);
             feedback.setVisibility(busy || !error.isEmpty() ? View.VISIBLE : View.GONE);
             send.setEnabled(!busy);
+            stop.setVisibility(busy ? View.VISIBLE : View.GONE);
             transcript.removeAllViews();
             if (history.length() == 0) {
                 var empty = label(c, "Apa yang mau kamu tanyakan?", 16, MUTED);
@@ -180,3 +191,4 @@ final class Chat {
         return root;
     }
 }
+

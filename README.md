@@ -14,3 +14,4 @@ API key disimpan dengan AES-GCM melalui Android Keystore. Pesan dikirim ke endpo
 - Lokal: buka folder proyek di Android Studio, gunakan JDK 17, pasang Android SDK Platform 35, sinkronkan Gradle 8.9, lalu pilih Build > Build App Bundle(s) / APK(s) > Build APK(s). Dengan Gradle 8.9 pada PATH, jalankan `gradle :app:assembleDebug`. Hasil ada di `app/build/outputs/apk/debug/app-debug.apk`.
 - GitHub: masukkan isi folder proyek termasuk folder tersembunyi .github ke repositori dengan Actions aktif. Jalankan workflow Build Android APK. Unduh artefak Omni-Float-AI-APK setelah build berhasil dan ekstrak APK-nya.
 
+

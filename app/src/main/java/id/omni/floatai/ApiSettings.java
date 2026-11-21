@@ -133,7 +133,7 @@ final class ApiSettings {
     private void setReady(boolean ready) {
         pick.setEnabled(ready);
         dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(ready);
-        pick.setText(!ready ? "Pilih model" : Providers.AUTO.equals(selected) ? "Otomatis · Pilih model" : selected);
+        pick.setText(!ready ? "Pilih model" : Providers.AUTO.equals(selected) ? "Otomatis � Pilih model" : selected);
     }
 
     private void fetch() {
@@ -143,7 +143,7 @@ final class ApiSettings {
         int ticket = ++revision;
         models = java.util.Collections.emptyList();
         setReady(false);
-        hint.setText("Memuat model dari API…");
+        hint.setText("Memuat model dari API.");
         worker.execute(() -> {
             try {
                 List<String> available = Providers.models(snapshot);
@@ -207,3 +207,4 @@ final class ApiSettings {
         }
     }
 }
+

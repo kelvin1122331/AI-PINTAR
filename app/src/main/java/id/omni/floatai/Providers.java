@@ -191,6 +191,7 @@ final class Providers {
     }
 
     private static JSONObject request(URL url, String key, JSONObject body) throws Exception {
+        if (Thread.currentThread().isInterrupted()) throw new InterruptedException();
         HttpsURLConnection connection = (HttpsURLConnection) url.openConnection();
         try {
             connection.setConnectTimeout(12000);
@@ -225,10 +226,11 @@ final class Providers {
         if (status != 400 && status != 403 && status != 404) return false;
         try {
             String detail = read(connection.getErrorStream(), 16000).toLowerCase(java.util.Locale.ROOT);
-            return detail.contains("model_not_found") || detail.contains("unsupported_model")
+            return (status == 400 && detail.contains("image") && (detail.contains("not support") || detail.contains("text only") || detail.contains("only text")))
+                || detail.contains("model_not_found") || detail.contains("unsupported_model")
                 || detail.contains("model_decommissioned") || detail.contains("no endpoints found")
                 || (detail.contains("model") && (detail.contains("not found") || detail.contains("does not exist")
-                    || detail.contains("not supported") || detail.contains("don’t have access")
+                    || detail.contains("not supported") || detail.contains("don't have access")
                     || detail.contains("do not have access") || detail.contains("not available")));
         } catch (Exception ignored) {
             return false;
@@ -241,6 +243,7 @@ final class Providers {
             byte[] chunk = new byte[8192];
             int count;
             while ((count = input.read(chunk)) != -1) {
+                if (Thread.currentThread().isInterrupted()) throw new InterruptedException();
                 if (buffer.size() + count > limit) throw new IllegalStateException("Respons API terlalu besar.");
                 buffer.write(chunk, 0, count);
             }
@@ -248,3 +251,4 @@ final class Providers {
         }
     }
 }
+
