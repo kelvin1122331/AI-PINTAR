@@ -13,11 +13,11 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: Omni-Float-AI-APK
-          run-id: '44940986216'
+          run-id: '44942392137'
           github-token: ${{ github.token }}
       - name: Verify exact delivered APK
         run: |
-          echo '9cf4e065cbc54f7cc3ac33c84a7baad7dd5c5bf4eaf9822ed47903a18deff599  Omni_Float_AI.apk' | sha256sum -c -
+          echo '68333600cdcabea3a83319c72ff1c63216c50ffe2e28273a9ae441a63b5db0fb  Omni_Float_AI.apk' | sha256sum -c -
       - name: Enable emulator KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
@@ -66,7 +66,7 @@ jobs:
 
           package = 'id.omni.floatai'
           print(adb('install', '-g', 'Omni_Float_AI.apk'))
-          assert 'versionName=1.4' in adb('shell', 'dumpsys', 'package', package)
+          assert 'versionName=1.5' in adb('shell', 'dumpsys', 'package', package)
           adb('shell', 'appops', 'set', package, 'SYSTEM_ALERT_WINDOW', 'allow')
           adb('shell', 'am', 'start', '-W', '-n', package + '/.MainActivity')
           require('Omni Float AI')
@@ -85,64 +85,56 @@ jobs:
           service = adb('shell','dumpsys','activity','services',package)
           assert 'BubbleService' in service and 'isForeground=true' in service
           print('PASS foreground bubble service', flush=True)
-          adb('shell','input','keyevent','KEYCODE_HOME')
+          adb('shell','am','start','-W','-a','android.settings.SETTINGS')
           time.sleep(1)
-          bubble = node('Buka chat Omni Float AI', 1) or node('AI', 1)
-          if bubble is not None:
-              tap_node(bubble)
-          else:
-              density = int(re.findall(r'(\d+)',adb('shell','wm','density'))[-1])/160
-              for y in (153, 177, 195):
-                  adb('shell','input','tap',str(round(44*density)),str(round(y*density)))
-                  if node('Chatbot',1) is not None:
-                      break
-          require('Chatbot')
+
+          def open_bubble():
+              bubble = node('Buka chat Omni Float AI',1) or node('AI',1)
+              if bubble is not None:
+                  tap_node(bubble)
+              else:
+                  density = int(re.findall(r'(\d+)',adb('shell','wm','density'))[-1])/160
+                  for y in (153,177,195):
+                      adb('shell','input','tap',str(round(44*density)),str(round(y*density)))
+                      if node('Mode otomatis',1) is not None: break
+              require('Mode otomatis')
+
+          def window_counts():
+              dump = adb('shell', 'dumpsys', 'window', 'windows')
+              return len([l for l in dump.splitlines() if 'Window #' in l and 'id.omni.floatai' in l])
+
+          open_bubble()
           tap('Mode otomatis')
-          require('Izinkan akses layar')
-          require('Terjemah langsung ke Indonesia')
-          all_labels = set()
-          for attempt in range(3):
-              all_labels.update(n.get('text') for n in nodes())
-              if attempt < 2: scroll()
-          for name in ['Jawab 1 soal','Otomatis sampai akhir halaman','Otomatis 30 detik','Otomatis 30 menit','Stop generation']:
-              assert name in all_labels, ('Missing tool',name, sorted(x for x in all_labels if x))
-              print(f'PASS UI {name}', flush=True)
-          tap('Stop generation')
-          require('Sesi layar berhenti.')
-          tap('Samaran')
-          time.sleep(.5)
-          density = int(re.findall(r'(\d+)',adb('shell','wm','density'))[-1])/160
-          for y in (153,177,195):
-              adb('shell','input','tap',str(round(44*density)),str(round(y*density)))
-              if node('Mode otomatis',1) is not None: break
-          require('Mode otomatis')
-          print('PASS purple and orange UI smoke flow', flush=True)
-          raise SystemExit(0)
-          tap('Izinkan akses layar')
-          seen = [n.get('text') for n in nodes() if n.get('text')]
-          print('CONSENT UI:', seen, flush=True)
-          assert any('screen' in v.lower() or 'record' in v.lower() or 'cast' in v.lower() for v in seen), seen
-          for label in ('Start now','Share screen','Start recording','Start'):
-              target = node(label,1)
-              if target is not None:
-                  tap_node(target)
-                  break
+          tap('Aktifkan Terjemah Layar')
+          require('Start')
+          tap('Start')
+          time.sleep(2)
+          until = time.monotonic() + 95
+          while time.monotonic() < until:
+              if window_counts() >= 2: break
+              time.sleep(1)
           else:
-              raise AssertionError('Android capture consent button was not recognized')
-          require('Matikan akses layar')
-          tap('Matikan akses layar')
-          require('Akses layar dimatikan.')
-          adb('shell', 'settings', 'put', 'secure', 'enabled_accessibility_services', package + '/.QuizAccessibility')
-          adb('shell', 'settings', 'put', 'secure', 'accessibility_enabled', '1')
-          time.sleep(1)
-          assert 'QuizAccessibility' in adb('shell','dumpsys','accessibility')
-          print('PASS accessibility service binding', flush=True)
-          tap('Jawab 1 soal')
-          density = int(re.findall(r'(\d+)',adb('shell','wm','density'))[-1])/160
-          for y in (153,177,195):
-              adb('shell','input','tap',str(round(44*density)),str(round(y*density)))
-              if node('Mode otomatis',1) is not None: break
-          require('Atur provider dan model di menu API.')
+              open_bubble()
+              print('Overlay UI:', [n.get('text') for n in nodes() if n.get('text')], flush=True)
+              raise AssertionError('Translation window was not drawn.')
+          print('PASS real screen capture creates translation overlay', flush=True)
+          before = [n.get('text') for n in nodes() if n.get('text')]
+          scroll()
+          time.sleep(2)
+          after = [n.get('text') for n in nodes() if n.get('text')]
+          assert before != after, 'Underlying page did not scroll'
+          until = time.monotonic() + 20
+          while time.monotonic() < until:
+              if window_counts() >= 2: break
+              time.sleep(1)
+          else:
+              raise AssertionError('Translation overlay did not return after scroll')
+          print('PASS page scroll works with translation overlay', flush=True)
+          open_bubble()
+          tap('Nonaktifkan Terjemah Layar')
+          require('Terjemah nonaktif.')
+          require('Aktifkan Terjemah Layar')
+          print('PASS translation toggles off with the same control', flush=True)
           PY
       - uses: reactivecircus/android-emulator-runner@v2
         with:
