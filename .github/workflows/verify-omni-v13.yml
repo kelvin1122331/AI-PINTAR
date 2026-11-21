@@ -13,11 +13,11 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: Omni-Float-AI-APK
-          run-id: '44942392137'
+          run-id: '44943479966'
           github-token: ${{ github.token }}
       - name: Verify exact delivered APK
         run: |
-          echo '68333600cdcabea3a83319c72ff1c63216c50ffe2e28273a9ae441a63b5db0fb  Omni_Float_AI.apk' | sha256sum -c -
+          echo '38666f84174194f79e6e18f41ae7bcbcfabc68996aab6d1ef0ffc9c06f3b40c3  Omni_Float_AI.apk' | sha256sum -c -
       - name: Enable emulator KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
@@ -108,7 +108,7 @@ jobs:
 
           package = 'id.omni.floatai'
           print(adb('install', '-g', 'Omni_Float_AI.apk'))
-          assert 'versionName=1.5' in adb('shell', 'dumpsys', 'package', package)
+          assert 'versionName=1.5.1' in adb('shell', 'dumpsys', 'package', package)
           adb('shell', 'appops', 'set', package, 'SYSTEM_ALERT_WINDOW', 'allow')
           adb('shell', 'am', 'start', '-W', '-n', package + '/.MainActivity')
           require('Omni Float AI')
@@ -144,7 +144,7 @@ jobs:
 
           def window_counts():
               dump = adb('shell', 'dumpsys', 'window', 'windows')
-              return len([l for l in dump.splitlines() if 'Window #' in l and 'id.omni.floatai' in l])
+              return len([l for l in dump.splitlines() if 'Window #' in l and 'Omni Float Translation' in l])
 
           open_bubble()
           tap('Mode otomatis')
@@ -154,7 +154,7 @@ jobs:
           time.sleep(2)
           until = time.monotonic() + 95
           while time.monotonic() < until:
-              if window_counts() >= 2: break
+              if window_counts() >= 1: break
               time.sleep(1)
           else:
               open_bubble()
@@ -162,13 +162,15 @@ jobs:
               raise AssertionError('Translation window was not drawn.')
           print('PASS real screen capture creates translation overlay', flush=True)
           before = [n.get('text') for n in nodes() if 'for reading' in (n.get('text') or '') or 'Good morning' in (n.get('text') or '')]
+          assert before, 'English fixture did not regain focus after screen permission'
+          print('PASS source app stays visible after consent', flush=True)
           scroll()
           time.sleep(2)
           after = [n.get('text') for n in nodes() if 'for reading' in (n.get('text') or '') or 'Good morning' in (n.get('text') or '')]
           assert before != after, 'Underlying page did not scroll'
           until = time.monotonic() + 20
           while time.monotonic() < until:
-              if window_counts() >= 2: break
+              if window_counts() >= 1: break
               time.sleep(1)
           else:
               raise AssertionError('Translation overlay did not return after scroll')
@@ -177,6 +179,7 @@ jobs:
           tap('Nonaktifkan Terjemah Layar')
           require('Terjemah nonaktif.')
           require('Aktifkan Terjemah Layar')
+          assert window_counts() == 0, 'Translation window remains after toggle off'
           print('PASS translation toggles off with the same control', flush=True)
           PY
       - uses: reactivecircus/android-emulator-runner@v2
