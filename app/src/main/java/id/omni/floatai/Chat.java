@@ -159,8 +159,8 @@ final class Chat {
         Runnable render = () -> {
             int provider = Providers.active(c);
             String model = Providers.prefs(c).getString("model" + provider, "");
-            if (Providers.AUTO.equals(model)) model = lastModel.isEmpty() ? "Otomatis" : "Otomatis � " + lastModel;
-            status.setText(Providers.NAMES[provider] + (model.isEmpty() ? "" : "  �  " + model));
+            if (Providers.AUTO.equals(model)) model = lastModel.isEmpty() ? "Otomatis" : "Otomatis ? " + lastModel;
+            status.setText(Providers.NAMES[provider] + (model.isEmpty() ? "" : "  ?  " + model));
             feedback.setText(busy ? "Menunggu jawaban." : error);
             feedback.setVisibility(busy || !error.isEmpty() ? View.VISIBLE : View.GONE);
             send.setEnabled(!busy);
@@ -191,4 +191,5 @@ final class Chat {
         return root;
     }
 }
+
 

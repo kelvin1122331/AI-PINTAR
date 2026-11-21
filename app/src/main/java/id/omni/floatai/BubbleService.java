@@ -16,6 +16,9 @@ public final class BubbleService extends Service {
     private static final String STOP = "id.omni.floatai.STOP";
     private WindowManager windows;
     private View overlay;
+    private View translation;
+    private final android.os.Handler ui = new android.os.Handler(android.os.Looper.getMainLooper());
+    private final Runnable dismissTranslation = this::clearTranslation;
     private int bubbleX;
     private int bubbleY;
     private boolean started;
@@ -24,6 +27,7 @@ public final class BubbleService extends Service {
     private boolean fadeTransition;
     private String result = "";
     private ScreenAssist assist;
+    private QuizRunner quiz;
     private Notification notification;
     private android.widget.TextView resultView;
 
@@ -54,6 +58,7 @@ public final class BubbleService extends Service {
         started = true;
         windows = getSystemService(WindowManager.class);
         assist = new ScreenAssist(this);
+        quiz = new QuizRunner(this);
         bubbleX = Chat.dp(this, 16);
         bubbleY = Chat.dp(this, 125);
         showBubble();
@@ -147,6 +152,7 @@ public final class BubbleService extends Service {
     }
 
     private void showPanel() {
+        clearTranslation();
         var metrics = getResources().getDisplayMetrics();
         var p = params(Math.min(Chat.dp(this, 410), metrics.widthPixels - Chat.dp(this, 16)),
             Math.min(Chat.dp(this, 470), (int) (metrics.heightPixels * 0.76)),
@@ -188,15 +194,20 @@ public final class BubbleService extends Service {
                     startActivity(new Intent(this, CaptureConsent.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
                 }
             }));
-            screenButton(panel, "Terjemah layar", "Terjemahkan teks yang terbaca di layar ke bahasa Indonesia. Pertahankan urutan. Bila teks tidak terbaca, katakan demikian.", 0);
-            screenButton(panel, "Jawab 1 soal", "Baca satu soal paling atas yang lengkap. Beri saran jawaban dan satu alasan. Jika tidak terbaca, jangan menebak.", 0);
-            screenButton(panel, "Target 100 · latihan", "Bantu latihan. Identifikasi soal di layar, berikan saran jawaban dengan alasan, dan tandai bagian yang tidak pasti.", 0);
-            screenButton(panel, "Target KKM · latihan", "Bantu latihan menuju KKM. Jelaskan konsep inti dan langkah tercepat untuk menyelesaikan soal di layar. Tandai jika kurang yakin.", 0);
-            screenButton(panel, "Sesi 30 detik", "Berikan saran jawaban singkat untuk satu soal yang terlihat. Bila soal tidak terbaca, katakan demikian.", 30_000);
-            screenButton(panel, "Sesi 30 menit", "Berikan saran jawaban dan alasan singkat untuk satu soal yang terlihat. Bila soal tidak terbaca, katakan demikian.", 1_800_000);
+            screenButton(panel, "Terjemah langsung ke Indonesia",
+                "Terjemahkan tulisan non-Indonesia yang terlihat ke bahasa Indonesia. " +
+                "Kembalikan hanya JSON {\"teks\":[{\"x\":0,\"y\":0,\"w\":100,\"h\":30,\"id\":\"terjemahan\"}]}. " +
+                "x,y,w,h adalah kotak teks ASLI dalam koordinat 0 sampai 1000 pada gambar penuh dari pojok kiri atas. " +
+                "Gabungkan baris satu paragraf bila perlu. Gunakan maksimal 28 kotak. Jangan sertakan teks asli atau penjelasan. Jika tidak ada teks, gunakan daftar kosong.", 0);
+            panel.addView(Chat.button(this, "Atur aksesibilitas untuk kuis Chrome", false, () ->
+                startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))));
+            quizButton(panel, "Jawab 1 soal", 1, 60_000);
+            quizButton(panel, "Otomatis sampai akhir halaman", Integer.MAX_VALUE, 1_800_000);
+            quizButton(panel, "Otomatis 30 detik", Integer.MAX_VALUE, 30_000);
+            quizButton(panel, "Otomatis 30 menit", Integer.MAX_VALUE, 1_800_000);
             panel.addView(Chat.button(this, fadeTransition ? "Transisi halus: aktif" : "Transisi halus: nonaktif", false,
                 () -> { fadeTransition = !fadeTransition; showPanel(); }));
-            panel.addView(Chat.button(this, "Stop generation", false, () -> { Chat.SESSION.stop(); assist.stop(); }));
+            panel.addView(Chat.button(this, "Stop generation", false, () -> { Chat.SESSION.stop(); quiz.cancel(); assist.stop(); }));
         } else {
             var panel = Chat.SESSION.panel(this, null, null, null);
             shell.addView(panel, new android.widget.LinearLayout.LayoutParams(-1, 0, 1));
@@ -217,9 +228,59 @@ public final class BubbleService extends Service {
 
     private void screenButton(android.widget.LinearLayout panel, String label, String prompt, long duration) {
         panel.addView(Chat.button(this, label, false, () -> {
+            quiz.cancel();
+            clearTranslation();
             if (assist.ready()) showBubble();
             assist.start(prompt, duration);
         }));
+    }
+
+    private void quizButton(android.widget.LinearLayout panel, String name, int limit, long duration) {
+        panel.addView(Chat.button(this, name, false, () -> {
+            assist.cancel();
+            clearTranslation();
+            showBubble();
+            quiz.start(limit, duration);
+        }));
+    }
+
+    boolean showTranslation(String response) {
+        clearTranslation();
+        TranslationOverlay layer;
+        try {
+            layer = new TranslationOverlay(this, response);
+            if (layer.isEmpty()) return false;
+            var layout = params(-1, -1, WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN);
+            layout.alpha = 0.78f;
+            if (Build.VERSION.SDK_INT >= 30) layout.setFitInsetsTypes(0);
+            windows.addView(layer, layout);
+            translation = layer;
+            // Put the draggable bubble above the translation layer.
+            showBubble();
+            ui.postDelayed(dismissTranslation, 20_000);
+            return true;
+        } catch (Exception error) {
+            return false;
+        }
+    }
+
+    void clearTranslation() {
+        ui.removeCallbacks(dismissTranslation);
+        if (translation != null) {
+            windows.removeViewImmediate(translation);
+            translation = null;
+        }
+    }
+
+    @Override public void onConfigurationChanged(android.content.res.Configuration config) {
+        super.onConfigurationChanged(config);
+        clearTranslation();
+        if (assist != null && assist.ready()) {
+            assist.release(true);
+            screenStatus("Ukuran layar berubah. Aktifkan kembali akses layar.");
+        }
+        if (quiz != null) quiz.cancel();
     }
 
     void screenStatus(String text) {
@@ -234,8 +295,11 @@ public final class BubbleService extends Service {
 
     @Override public void onDestroy() {
         if (assist != null) assist.destroy();
+        if (quiz != null) quiz.destroy();
+        clearTranslation();
         removeOverlay();
         stopForeground(STOP_FOREGROUND_REMOVE);
         super.onDestroy();
     }
 }
+

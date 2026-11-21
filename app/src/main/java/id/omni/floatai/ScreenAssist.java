@@ -53,6 +53,7 @@ final class ScreenAssist {
                 @Override public void onStop() {
                     if (projection != session) return;
                     release(false);
+                    service.clearTranslation();
                     service.screenStatus("Izin akses layar berakhir.");
                 }
             }, ui);
@@ -87,7 +88,7 @@ final class ScreenAssist {
         instruction = prompt;
         deadline = duration == 0 ? 0 : SystemClock.elapsedRealtime() + duration;
         if (duration > 0) ui.postDelayed(expire, duration);
-        service.screenStatus("Membaca layar…");
+        service.screenStatus("Membaca layar.");
         ui.postDelayed(next, 450);
     }
 
@@ -138,10 +139,11 @@ final class ScreenAssist {
                 var result = Providers.complete(profile, messages, preferredModel);
                 ui.post(() -> {
                     if (ticket != generation) return;
-                    lastModel = result.model();
-                    service.screenStatus(result.text());
-                    if (deadline > 0) ui.postDelayed(next, 1000);
-                    else { active = false; service.restorePanel(); }
+                    active = false;
+                    if (!service.showTranslation(result.text())) {
+                        service.screenStatus("Tidak ada terjemahan yang bisa ditempatkan di layar.");
+                        service.restorePanel();
+                    }
                 });
             } catch (Exception error) {
                 ui.post(() -> {
@@ -167,7 +169,7 @@ final class ScreenAssist {
         }
     }
 
-    private void cancel() {
+    void cancel() {
         generation++;
         ui.removeCallbacks(next);
         ui.removeCallbacks(expire);
@@ -197,3 +199,4 @@ final class ScreenAssist {
 
     void destroy() { release(true); worker.shutdownNow(); }
 }
+
