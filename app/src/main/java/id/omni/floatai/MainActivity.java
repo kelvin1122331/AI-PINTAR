@@ -66,7 +66,7 @@ public final class MainActivity extends Activity {
         api.addView(apiControls);
 
         var platforms = section(root, "Platform kuis");
-        platforms.addView(Chat.label(this, "Quizizz / Wayground · Kahoot! · Google Forms · Microsoft Forms · Socrative · Nearpod · Blooket · Wordwall", 14, Chat.INK));
+        platforms.addView(Chat.label(this, "Quizizz / Wayground � Kahoot! � Google Forms � Microsoft Forms � Socrative � Nearpod � Blooket � Wordwall", 14, Chat.INK));
         var note = Chat.label(this, "Mode soal di Chrome untuk opsi pilihan tunggal yang dapat dibaca Aksesibilitas. Kompatibilitas tiap kuis dapat berbeda.", 13, Chat.MUTED);
         note.setPadding(0, Chat.dp(this, 8), 0, 0);
         platforms.addView(note);
@@ -144,4 +144,5 @@ public final class MainActivity extends Activity {
         new ApiSettings(this, this::updateStatus).show();
     }
 }
+
 

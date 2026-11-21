@@ -210,7 +210,7 @@ final class Chat {
             String model = Providers.prefs(c).getString("model" + provider, "");
             if (Providers.AUTO.equals(model)) model = lastModel.isEmpty() ? "Otomatis" : "Otomatis / " + lastModel;
             status.setText(Providers.NAMES[provider] + (model.isEmpty() ? "" : "  /  " + model));
-            feedback.setText(busy ? "Menunggu respons dari " + Providers.NAMES[provider] + "…" : error);
+            feedback.setText(busy ? "Menunggu respons dari " + Providers.NAMES[provider] + "." : error);
             feedback.setVisibility(busy || !error.isEmpty() ? View.VISIBLE : View.GONE);
             send.setEnabled(!busy);
             retry.setVisibility(!busy && !retryPrompt.isEmpty() ? View.VISIBLE : View.GONE);
@@ -247,5 +247,6 @@ final class Chat {
         return root;
     }
 }
+
 
 

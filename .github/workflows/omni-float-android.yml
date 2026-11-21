@@ -7,7 +7,7 @@ on:
       - 'app/**'
       - '.github/workflows/omni-float-android.yml'
 permissions:
-  contents: read
+  contents: write
 jobs:
   apk:
     runs-on: ubuntu-latest
@@ -28,10 +28,22 @@ jobs:
           "$SIGNER" verify "$APK"
           cp "$APK" Omni_Float_AI.apk
           sha256sum Omni_Float_AI.apk
-          base64 -w 160 Omni_Float_AI.apk | sed 's/^/APK_DATA /'
       - uses: actions/upload-artifact@v4
         with:
           name: Omni-Float-AI-APK
           path: Omni_Float_AI.apk
           if-no-files-found: error
-
+      - name: Publish signed APK download
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(sed -n "s/.*versionName '\([^']*\)'.*/\1/p" app/build.gradle)
+          tag="omni-float-v$version"
+          asset="Omni_Float_AI_v$version.apk"
+          cp Omni_Float_AI.apk "$asset"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "Release $tag already exists."
+          else
+            gh release create "$tag" "$asset" --target "$GITHUB_SHA" --title "Omni Float AI $version" --notes "APK Android dengan terjemahan layar langsung."
+          fi

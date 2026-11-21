@@ -16,9 +16,9 @@ public final class BubbleService extends Service {
     private static final String STOP = "id.omni.floatai.STOP";
     private WindowManager windows;
     private View overlay;
-    private View translation;
-    private final android.os.Handler ui = new android.os.Handler(android.os.Looper.getMainLooper());
-    private final Runnable dismissTranslation = this::clearTranslation;
+    private TranslationOverlay translation;
+    private boolean panelOpen;
+    private boolean startTranslationAfterConsent;
     private int bubbleX;
     private int bubbleY;
     static boolean active;
@@ -79,7 +79,13 @@ public final class BubbleService extends Service {
         } catch (RuntimeException error) {
             screenStatus("Izin tangkapan layar belum aktif.");
         }
-        restorePanel();
+        if (startTranslationAfterConsent && assist.ready()) {
+            startTranslationAfterConsent = false;
+            assist.start();
+        } else {
+            startTranslationAfterConsent = false;
+            restorePanel();
+        }
     }
 
     private WindowManager.LayoutParams params(int width, int height, int flags) {
@@ -105,6 +111,8 @@ public final class BubbleService extends Service {
     }
 
     private void showBubble() {
+        boolean wasOpen = panelOpen;
+        panelOpen = false;
         int size = Chat.dp(this, 56);
         var p = params(size, size, WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE);
         p.x = bubbleX;
@@ -153,9 +161,11 @@ public final class BubbleService extends Service {
             }
         });
         show(bubble, p);
+        if (wasOpen && assist != null && assist.running()) assist.refresh();
     }
 
     private void showPanel() {
+        panelOpen = true;
         clearTranslation();
         var metrics = getResources().getDisplayMetrics();
         var p = params(Math.min(Chat.dp(this, 410), metrics.widthPixels - Chat.dp(this, 16)),
@@ -190,21 +200,18 @@ public final class BubbleService extends Service {
             currentResult = Chat.label(this, result, 15, Chat.INK);
             currentResult.setTextIsSelectable(true);
             panel.addView(currentResult);
-            panel.addView(Chat.label(this, "Tangkapan layar dikirim ke API aktif. Gunakan model yang menerima gambar.", 13, Chat.MUTED));
+            panel.addView(Chat.label(this, "Terjemahan diproses di perangkat. Unduhan model pertama perlu internet.", 13, Chat.MUTED));
             panel.addView(Chat.button(this, assist.ready() ? "Matikan akses layar" : "Izinkan akses layar", true, () -> {
                 if (assist.ready()) {
                     assist.release(true);
                     screenStatus("Akses layar dimatikan.");
                     restorePanel();
                 } else {
-                    startActivity(new Intent(this, CaptureConsent.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+                    askForCapture(false);
                 }
             }));
-            screenButton(panel, "Terjemah langsung ke Indonesia",
-                "Terjemahkan tulisan non-Indonesia yang terlihat ke bahasa Indonesia. " +
-                "Kembalikan hanya JSON {\"teks\":[{\"x\":0,\"y\":0,\"w\":100,\"h\":30,\"id\":\"terjemahan\"}]}. " +
-                "x,y,w,h adalah kotak teks ASLI dalam koordinat 0 sampai 1000 pada gambar penuh dari pojok kiri atas. " +
-                "Gabungkan baris satu paragraf bila perlu. Gunakan maksimal 28 kotak. Jangan sertakan teks asli atau penjelasan. Jika tidak ada teks, gunakan daftar kosong.", 0);
+            panel.addView(Chat.button(this, assist.running() ? "Nonaktifkan Terjemah Layar" : "Aktifkan Terjemah Layar", true,
+                this::toggleTranslation));
             panel.addView(Chat.button(this, "Atur aksesibilitas untuk kuis Chrome", false, () ->
                 startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))));
             quizButton(panel, "Jawab 1 soal", 1, 60_000);
@@ -213,7 +220,7 @@ public final class BubbleService extends Service {
             quizButton(panel, "Otomatis 30 menit", Integer.MAX_VALUE, 1_800_000);
             panel.addView(Chat.button(this, fadeTransition ? "Transisi halus: aktif" : "Transisi halus: nonaktif", false,
                 () -> { fadeTransition = !fadeTransition; showPanel(); }));
-            panel.addView(Chat.button(this, "Stop generation", false, () -> { Chat.SESSION.stop(); quiz.cancel(); assist.stop(); }));
+            panel.addView(Chat.button(this, "Stop generation", false, () -> { Chat.SESSION.stop(); quiz.cancel(); assist.stop(); restorePanel(); }));
         } else {
             var panel = Chat.SESSION.panel(this, null, null, null);
             shell.addView(panel, new android.widget.LinearLayout.LayoutParams(-1, 0, 1));
@@ -232,13 +239,32 @@ public final class BubbleService extends Service {
         }
     }
 
-    private void screenButton(android.widget.LinearLayout panel, String label, String prompt, long duration) {
-        panel.addView(Chat.button(this, label, false, () -> {
-            quiz.cancel();
-            clearTranslation();
-            if (assist.ready()) showBubble();
-            assist.start(prompt, duration);
-        }));
+    private void askForCapture(boolean startTranslation) {
+        startTranslationAfterConsent = startTranslation;
+        startActivity(new Intent(this, CaptureConsent.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+    }
+
+    private void toggleTranslation() {
+        quiz.cancel();
+        if (assist.running()) {
+            assist.cancel();
+            screenStatus("Terjemah nonaktif.");
+            restorePanel();
+        } else if (assist.ready()) {
+            assist.start();
+        } else {
+            askForCapture(true);
+        }
+    }
+
+    boolean translationPaused() { return panelOpen; }
+    boolean hasTranslation() { return translation != null; }
+    boolean translationCovers(float x, float y) { return translation != null && translation.covers(x, y); }
+
+    void showBubbleForTranslation() { showBubble(); }
+
+    void refreshCapture() {
+        if (overlay != null && !panelOpen) overlay.setTranslationX(overlay.getTranslationX() == 0f ? 1f : 0f);
     }
 
     private void quizButton(android.widget.LinearLayout panel, String name, int limit, long duration) {
@@ -250,29 +276,26 @@ public final class BubbleService extends Service {
         }));
     }
 
-    boolean showTranslation(String response) {
+    void showTranslation(java.util.List<TranslationOverlay.Label> labels) {
         clearTranslation();
-        TranslationOverlay layer;
+        if (panelOpen || labels.isEmpty()) return;
+        var layer = new TranslationOverlay(this, labels);
+        var layout = params(-1, -1, WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+            | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN);
+        float maxOpacity = Build.VERSION.SDK_INT >= 31
+            ? getSystemService(android.hardware.input.InputManager.class).getMaximumObscuringOpacityForTouch() : 0.8f;
+        layout.alpha = Math.max(0f, maxOpacity - 0.04f);
+        if (Build.VERSION.SDK_INT >= 30) layout.setFitInsetsTypes(0);
         try {
-            layer = new TranslationOverlay(this, response);
-            if (layer.isEmpty()) return false;
-            var layout = params(-1, -1, WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-                | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN);
-            layout.alpha = 0.78f;
-            if (Build.VERSION.SDK_INT >= 30) layout.setFitInsetsTypes(0);
             windows.addView(layer, layout);
             translation = layer;
-            // Put the draggable bubble above the translation layer.
             showBubble();
-            ui.postDelayed(dismissTranslation, 20_000);
-            return true;
-        } catch (Exception error) {
-            return false;
+        } catch (WindowManager.BadTokenException | SecurityException error) {
+            screenStatus("Lapisan terjemah tidak bisa ditampilkan.");
         }
     }
 
     void clearTranslation() {
-        ui.removeCallbacks(dismissTranslation);
         if (translation != null) {
             windows.removeViewImmediate(translation);
             translation = null;
@@ -309,5 +332,6 @@ public final class BubbleService extends Service {
         super.onDestroy();
     }
 }
+
 
 
