@@ -11,6 +11,10 @@ import android.view.*;
 import android.widget.Button;
 
 public final class BubbleService extends Service {
+    static final String APPEARANCE = "id.omni.floatai.APPEARANCE";
+    static android.content.SharedPreferences appearance(android.content.Context context) {
+        return context.getSharedPreferences("bubble_appearance", MODE_PRIVATE);
+    }
     static final String CAPTURE = "id.omni.floatai.CAPTURE";
     private static final String CHANNEL = "floating_chat";
     private static final String STOP = "id.omni.floatai.STOP";
@@ -29,6 +33,9 @@ public final class BubbleService extends Service {
     private String result = "";
     private ScreenAssist assist;
     private QuizRunner quiz;
+    private ScreenVision vision;
+    private int pendingVision = -1;
+    private String visionText = "";
     private Notification notification;
     private android.widget.TextView resultView;
 
@@ -42,6 +49,7 @@ public final class BubbleService extends Service {
         boolean capture = intent != null && CAPTURE.equals(intent.getAction());
         if (started) {
             if (capture) connectCapture(intent);
+            if (intent != null && APPEARANCE.equals(intent.getAction())) showBubble();
             return START_NOT_STICKY;
         }
         var notifications = getSystemService(NotificationManager.class);
@@ -61,6 +69,7 @@ public final class BubbleService extends Service {
         windows = getSystemService(WindowManager.class);
         assist = new ScreenAssist(this);
         quiz = new QuizRunner(this);
+        vision = new ScreenVision(this);
         bubbleX = Chat.dp(this, 16);
         bubbleY = Chat.dp(this, 125);
         showBubble();
@@ -79,10 +88,15 @@ public final class BubbleService extends Service {
         } catch (RuntimeException error) {
             screenStatus("Izin tangkapan layar belum aktif.");
         }
-        if (startTranslationAfterConsent && assist.ready()) {
+        if (pendingVision >= 0 && assist.ready()) {
+            int selected = pendingVision;
+            pendingVision = -1;
+            runVision(selected);
+        } else if (startTranslationAfterConsent && assist.ready()) {
             startTranslationAfterConsent = false;
             assist.start();
         } else {
+            pendingVision = -1;
             startTranslationAfterConsent = false;
             restorePanel();
         }
@@ -113,7 +127,11 @@ public final class BubbleService extends Service {
     private void showBubble() {
         boolean wasOpen = panelOpen;
         panelOpen = false;
-        int size = Chat.dp(this, 56);
+        var prefs = appearance(this);
+        int size = Chat.dp(this, prefs.getInt("size", 56));
+        var screen = getResources().getDisplayMetrics();
+        bubbleX = Math.max(0, Math.min(screen.widthPixels - size, prefs.getInt("x", Chat.dp(this,16))));
+        bubbleY = Math.max(0, Math.min(screen.heightPixels - size, prefs.getInt("y", Chat.dp(this,125))));
         var p = params(size, size, WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE);
         p.x = bubbleX;
         p.y = bubbleY;
@@ -121,7 +139,8 @@ public final class BubbleService extends Service {
         var bubbleFill = Chat.shape(this, Chat.ORANGE, 28);
         bubbleFill.setStroke(Chat.dp(this, 2), Chat.PURPLE);
         bubble.setBackground(bubbleFill);
-        bubble.setAlpha(discreet ? 0.12f : 1f);
+        bubble.setAlpha(discreet ? 0.12f : prefs.getInt("opacity", 100) / 100f);
+        bubble.setPadding(0,0,0,0);
         bubble.setContentDescription("Buka chat Omni Float AI");
         bubble.setOnLongClickListener(v -> { stopSelf(); return true; });
         int slop = ViewConfiguration.get(this).getScaledTouchSlop();
@@ -147,13 +166,21 @@ public final class BubbleService extends Service {
                             cancel.recycle();
                             moving = true;
                         }
-                        var screen = getResources().getDisplayMetrics();
-                        p.x = bubbleX = Math.max(0, Math.min(screen.widthPixels - size, oldX + dx));
-                        p.y = bubbleY = Math.max(0, Math.min(screen.heightPixels - size, oldY + dy));
+                        var bounds = getResources().getDisplayMetrics();
+                        p.x = bubbleX = Math.max(0, Math.min(bounds.widthPixels - size, oldX + dx));
+                        p.y = bubbleY = Math.max(0, Math.min(bounds.heightPixels - size, oldY + dy));
                         windows.updateViewLayout(view, p);
                         return true;
                     case MotionEvent.ACTION_UP:
                     case MotionEvent.ACTION_CANCEL:
+                        if (moving) {
+                            if (prefs.getBoolean("snap", false)) {
+                                int edge = Math.max(0, getResources().getDisplayMetrics().widthPixels - size);
+                                p.x = bubbleX = bubbleX < edge / 2 ? 0 : edge;
+                                windows.updateViewLayout(view, p);
+                            }
+                            prefs.edit().putInt("x", bubbleX).putInt("y", bubbleY).apply();
+                        }
                         return moving;
                     default:
                         return false;
@@ -200,9 +227,17 @@ public final class BubbleService extends Service {
             currentResult = Chat.label(this, result, 15, Chat.INK);
             currentResult.setTextIsSelectable(true);
             panel.addView(currentResult);
+            panel.addView(Chat.button(this, "Terjemah Kamera", true, () -> openTool(CameraTranslator.class, 0, "")));
+            panel.addView(Chat.button(this, "AI Smart Screen Vision", false, this::visionOptions));
+            panel.addView(Chat.button(this, "AI Study Mode", false, () -> openTool(Toolbox.class, 0, "")));
+            if (!visionText.isEmpty()) {
+                panel.addView(Chat.button(this, "Salin analisis", false, () -> Toolbox.copy(getApplicationContext(), visionText)));
+                panel.addView(Chat.button(this, "Pelajari isi layar", false, () -> openTool(Toolbox.class, 0, visionText)));
+            }
             panel.addView(Chat.label(this, "Terjemahan diproses di perangkat. Unduhan model pertama perlu internet.", 13, Chat.MUTED));
             panel.addView(Chat.button(this, assist.ready() ? "Matikan akses layar" : "Izinkan akses layar", true, () -> {
                 if (assist.ready()) {
+                    vision.cancel();
                     assist.release(true);
                     screenStatus("Akses layar dimatikan.");
                     restorePanel();
@@ -220,7 +255,7 @@ public final class BubbleService extends Service {
             quizButton(panel, "Otomatis 30 menit", Integer.MAX_VALUE, 1_800_000);
             panel.addView(Chat.button(this, fadeTransition ? "Transisi halus: aktif" : "Transisi halus: nonaktif", false,
                 () -> { fadeTransition = !fadeTransition; showPanel(); }));
-            panel.addView(Chat.button(this, "Stop generation", false, () -> { Chat.SESSION.stop(); quiz.cancel(); assist.stop(); restorePanel(); }));
+            panel.addView(Chat.button(this, "Stop generation", false, () -> { Chat.SESSION.stop(); quiz.cancel(); vision.cancel(); assist.stop(); restorePanel(); }));
         } else {
             var panel = Chat.SESSION.panel(this, null, null, null);
             shell.addView(panel, new android.widget.LinearLayout.LayoutParams(-1, 0, 1));
@@ -239,13 +274,49 @@ public final class BubbleService extends Service {
         }
     }
 
+    private void openTool(Class<?> screen, int tab, String text) {
+        showBubble();
+        if (assist.running()) assist.cancel();
+        startActivity(new Intent(this, screen).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            .putExtra("tab", tab).putExtra("studyText", text));
+    }
+
+    private void visionOptions() {
+        var menu = new AlertDialog.Builder(this, R.style.OmniTheme).setTitle("AI Smart Screen Vision")
+            .setItems(new String[]{"Jelaskan layar", "Ekstrak teks", "Jelaskan grafik atau tabel"}, (dialog, choice) -> {
+                if (assist.ready()) runVision(choice);
+                else { pendingVision = choice; askForCapture(false); }
+            }).setNegativeButton("Batal", null).create();
+        menu.getWindow().setType(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY);
+        menu.show();
+    }
+
+    private void runVision(int mode) {
+        quiz.cancel();
+        vision.cancel();
+        assist.cancel();
+        showBubble();
+        assist.snapshot(frame -> {
+            if (frame == null) visionResult("Layar belum dapat dibaca.", false);
+            else vision.analyze(frame, mode);
+        });
+    }
+
+    void visionResult(String value, boolean success) {
+        visionText = success ? value : "";
+        screenStatus(value);
+        restorePanel();
+    }
+
     private void askForCapture(boolean startTranslation) {
+        if (startTranslation) pendingVision = -1;
         startTranslationAfterConsent = startTranslation;
         startActivity(new Intent(this, CaptureConsent.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
     }
 
     private void toggleTranslation() {
         quiz.cancel();
+        vision.cancel();
         if (assist.running()) {
             assist.cancel();
             screenStatus("Terjemah nonaktif.");
@@ -269,6 +340,7 @@ public final class BubbleService extends Service {
 
     private void quizButton(android.widget.LinearLayout panel, String name, int limit, long duration) {
         panel.addView(Chat.button(this, name, false, () -> {
+            vision.cancel();
             assist.cancel();
             clearTranslation();
             showBubble();
@@ -327,12 +399,14 @@ public final class BubbleService extends Service {
         active = false;
         if (assist != null) assist.destroy();
         if (quiz != null) quiz.destroy();
+        if (vision != null) vision.destroy();
         clearTranslation();
         removeOverlay();
         stopForeground(STOP_FOREGROUND_REMOVE);
         super.onDestroy();
     }
 }
+
 
 
 

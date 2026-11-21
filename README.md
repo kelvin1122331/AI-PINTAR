@@ -21,3 +21,4 @@ Terjemah layar membutuhkan izin Android dan model yang menerima gambar. Teks Ind
 
 
 Pada v1.5, ketuk Aktifkan Terjemah Layar dan setujui akses layar Android. Geser halaman seperti biasa. Buka bubble dan ketuk tombol yang sama untuk mematikan. Pengenalan teks beraksara Latin dan terjemahan memakai ML Kit di perangkat; unduhan model bahasa pertama memerlukan internet.
+

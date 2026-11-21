@@ -45,5 +45,5 @@ jobs:
           if gh release view "$tag" >/dev/null 2>&1; then
             echo "Release $tag already exists."
           else
-            gh release create "$tag" "$asset" --target "$GITHUB_SHA" --title "Omni Float AI $version" --notes "APK Android dengan terjemahan layar langsung."
+            gh release create "$tag" "$asset" --target "$GITHUB_SHA" --title "Omni Float AI $version" --notes "APK Android dengan kamera terjemah, Screen Vision, Study Mode, dan monitor koneksi."
           fi

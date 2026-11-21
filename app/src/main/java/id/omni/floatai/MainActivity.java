@@ -65,8 +65,17 @@ public final class MainActivity extends Activity {
         addControl(apiControls, "Masukkan API key", false, this::configure);
         api.addView(apiControls);
 
+        var tools = section(root, "Ruang AI");
+        var toolsRow = new LinearLayout(this);
+        addControl(toolsRow, "Kamera", true, () -> startActivity(new Intent(this, CameraTranslator.class)));
+        addControl(toolsRow, "Belajar", false, () -> startActivity(new Intent(this, Toolbox.class)));
+        tools.addView(toolsRow);
+        var settingsRow = new LinearLayout(this);
+        addControl(settingsRow, "Monitor koneksi", false, () -> openTool(1));
+        addControl(settingsRow, "Atur bubble", false, () -> openTool(2));
+        tools.addView(settingsRow);
         var platforms = section(root, "Platform kuis");
-        platforms.addView(Chat.label(this, "Quizizz / Wayground � Kahoot! � Google Forms � Microsoft Forms � Socrative � Nearpod � Blooket � Wordwall", 14, Chat.INK));
+        platforms.addView(Chat.label(this, "Quizizz / Wayground · Kahoot! · Google Forms · Microsoft Forms · Socrative · Nearpod · Blooket · Wordwall", 14, Chat.INK));
         var note = Chat.label(this, "Mode soal di Chrome untuk opsi pilihan tunggal yang dapat dibaca Aksesibilitas. Kompatibilitas tiap kuis dapat berbeda.", 13, Chat.MUTED);
         note.setPadding(0, Chat.dp(this, 8), 0, 0);
         platforms.addView(note);
@@ -139,6 +148,8 @@ public final class MainActivity extends Activity {
         super.onRequestPermissionsResult(request, permissions, results);
         if (request == 2 && Settings.canDrawOverlays(this)) activate();
     }
+
+    private void openTool(int tab) { startActivity(new Intent(this, Toolbox.class).putExtra("tab",tab)); }
 
     private void configure() {
         new ApiSettings(this, this::updateStatus).show();

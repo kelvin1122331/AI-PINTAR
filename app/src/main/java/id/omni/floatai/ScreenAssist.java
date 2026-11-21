@@ -27,6 +27,13 @@ final class ScreenAssist {
     private ImageReader reader;
     private VirtualDisplay display;
     private Bitmap latest;
+    private java.util.function.Consumer<Bitmap> snapshot;
+    private long snapshotAfter;
+    private final Runnable snapshotTimeout = () -> {
+        var callback = snapshot;
+        snapshot = null;
+        if (callback != null) callback.accept(null);
+    };
     private int[] signature;
     private long lastSample;
     private long lastChange;
@@ -76,7 +83,7 @@ final class ScreenAssist {
         active = true;
         run++;
         revision++;
-        service.screenStatus("Terjemah aktif. Membaca layar…");
+        service.screenStatus("Terjemah aktif. Membaca layar.");
         service.showBubbleForTranslation();
         service.clearTranslation();
         lastChange = SystemClock.uptimeMillis();
@@ -91,7 +98,16 @@ final class ScreenAssist {
     private void onFrame(ImageReader source) {
         if (source != reader) return;
         try (Image image = source.acquireLatestImage()) {
-            if (!active || image == null || service.translationPaused()) return;
+            if (image == null) return;
+            if (snapshot != null && SystemClock.uptimeMillis() >= snapshotAfter) {
+                Bitmap frame = copy(image);
+                var callback = snapshot;
+                snapshot = null;
+                ui.removeCallbacks(snapshotTimeout);
+                callback.accept(frame);
+                return;
+            }
+            if (!active || service.translationPaused()) return;
             long now = SystemClock.uptimeMillis();
             if (signature != null && now - lastSample < 125) return;
             lastSample = now;
@@ -194,6 +210,16 @@ final class ScreenAssist {
         return cropped;
     }
 
+    void snapshot(java.util.function.Consumer<Bitmap> callback) {
+        cancel();
+        ui.postDelayed(() -> {
+            if (snapshot == callback) service.refreshCapture();
+        }, 280);
+        snapshotAfter = SystemClock.uptimeMillis() + 220;
+        snapshot = callback;
+        ui.postDelayed(snapshotTimeout, 3500);
+    }
+
     void refresh() {
         if (!active) return;
         revision++;
@@ -210,6 +236,8 @@ final class ScreenAssist {
 
     void cancel() {
         active = false;
+        snapshot = null;
+        ui.removeCallbacks(snapshotTimeout);
         run++;
         ui.removeCallbacks(recognize);
         latest(null);
@@ -230,3 +258,4 @@ final class ScreenAssist {
 
     void destroy() { release(true); translator.close(); }
 }
+

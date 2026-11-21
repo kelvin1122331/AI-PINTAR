@@ -169,6 +169,19 @@ final class Providers {
     }
 
     static Answer complete(Profile profile, JSONArray messages, String lastModel, Cancellation cancellation) throws Exception {
+        long start = android.os.SystemClock.elapsedRealtime();
+        int tokens = ConnectionMonitor.estimateInput(messages);
+        try {
+            Answer answer = findAnswer(profile, messages, lastModel, cancellation);
+            ConnectionMonitor.record(answer.model(), start, null, tokens, ConnectionMonitor.estimate(answer.text()));
+            return answer;
+        } catch (Exception error) {
+            ConnectionMonitor.record(profile.model(), start, ConnectionMonitor.describe(error), tokens, 0);
+            throw error;
+        }
+    }
+
+    private static Answer findAnswer(Profile profile, JSONArray messages, String lastModel, Cancellation cancellation) throws Exception {
         if (!profile.automatic()) return completeOne(profile, profile.model(), messages, cancellation);
         var candidates = new java.util.LinkedHashSet<String>();
         if (!lastModel.isEmpty()) {
