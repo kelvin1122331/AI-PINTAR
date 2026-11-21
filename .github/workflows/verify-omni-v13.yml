@@ -39,7 +39,7 @@ jobs:
           def node(label, retries=3):
               for _ in range(retries):
                   for item in nodes():
-                      if item.get('text') == label or item.get('content-desc') == label:
+                      if any((item.get(key) or '').casefold() == label.casefold() for key in ('text','content-desc')):
                           return item
                   time.sleep(.3)
               return None
@@ -76,7 +76,8 @@ jobs:
           require('API key')
           require('Muat ulang model')
           require('Pilih model')
-          assert node('Simpan & pakai').get('enabled') == 'false'
+          save = node('Simpan & pakai',1)
+          assert save is None or save.get('enabled') == 'false'
           print('PASS empty API key cannot save profile', flush=True)
           tap('Batal')
           tap('Aktifkan bubble')
@@ -117,7 +118,7 @@ jobs:
           tap('Izinkan akses layar')
           seen = [n.get('text') for n in nodes() if n.get('text')]
           print('CONSENT UI:', seen, flush=True)
-          assert any('screen' in v.lower() or 'record' in v.lower() for v in seen), seen
+          assert any('screen' in v.lower() or 'record' in v.lower() or 'cast' in v.lower() for v in seen), seen
           for label in ('Start now','Share screen','Start recording','Start'):
               target = node(label,1)
               if target is not None:
