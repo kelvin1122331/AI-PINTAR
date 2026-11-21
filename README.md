@@ -18,3 +18,4 @@ API key disimpan dengan AES-GCM melalui Android Keystore. Pesan dikirim ke endpo
 
 ## Floating v1.3
 Terjemah layar membutuhkan izin Android dan model yang menerima gambar. Teks Indonesia ditumpuk di posisi perkiraan teks asli selama 20 detik. Pilih opsi kuis hanya membaca tombol radio yang diekspos oleh halaman kuis Chrome yang didukung. Fitur kuis perlu diaktifkan di setelan aksesibilitas Android. Pengiriman final ditinjau dan dilakukan oleh pengguna.
+

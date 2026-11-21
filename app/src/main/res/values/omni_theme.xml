@@ -1,0 +1,10 @@
+<resources>
+    <style name="OmniTheme" parent="android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:colorAccent">#632FC2</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:statusBarColor">#FFFBFF</item>
+        <item name="android:navigationBarColor">#FFFBFF</item>
+        <item name="android:windowLightNavigationBar">true</item>
+        <item name="android:windowBackground">#FFFBFF</item>
+    </style>
+</resources>

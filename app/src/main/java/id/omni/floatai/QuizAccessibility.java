@@ -141,3 +141,4 @@ public final class QuizAccessibility extends AccessibilityService {
 
     private static String string(CharSequence text) { return text == null ? "" : text.toString(); }
 }
+

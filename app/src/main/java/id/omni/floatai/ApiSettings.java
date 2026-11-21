@@ -16,6 +16,7 @@ import java.util.concurrent.Executors;
 
 final class ApiSettings {
     private final Activity activity;
+    private final Runnable onSave;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final java.util.concurrent.ExecutorService worker = Executors.newFixedThreadPool(2);
     private final Runnable scheduled = this::fetch;
@@ -31,7 +32,7 @@ final class ApiSettings {
     private List<String> models = java.util.Collections.emptyList();
     private String selected = Providers.AUTO;
 
-    ApiSettings(Activity activity) { this.activity = activity; }
+    ApiSettings(Activity activity, Runnable onSave) { this.activity = activity; this.onSave = onSave; }
 
     void show() {
         var form = Chat.column(activity);
@@ -133,7 +134,7 @@ final class ApiSettings {
     private void setReady(boolean ready) {
         pick.setEnabled(ready);
         dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(ready);
-        pick.setText(!ready ? "Pilih model" : Providers.AUTO.equals(selected) ? "Otomatis · Pilih model" : selected);
+        pick.setText(!ready ? "Pilih model" : Providers.AUTO.equals(selected) ? "Otomatis � Pilih model" : selected);
     }
 
     private void fetch() {
@@ -201,6 +202,7 @@ final class ApiSettings {
         try {
             Providers.save(activity, index, profile());
             Chat.SESSION.clear();
+            onSave.run();
             dialog.dismiss();
         } catch (Exception error) {
             hint.setText("Pengaturan API belum tersimpan. Cek URL dan API key.");

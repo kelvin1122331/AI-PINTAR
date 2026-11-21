@@ -27,3 +27,4 @@ public final class CaptureConsent extends Activity {
     }
 }
 
+

@@ -12,7 +12,9 @@ import org.json.JSONObject;
 import java.util.concurrent.Executors;
 
 final class Chat {
-    static final int BG = 0xff101923, CARD = 0xff1b2935, WHITE = 0xffecf5fc, MUTED = 0xffafc1ce, MINT = 0xff52e1c3;
+    static final int BG = 0xfffffbff, CARD = 0xfff0e9fc, INK = 0xff26163e,
+        MUTED = 0xff655775, PURPLE = 0xff632fc2, ORANGE = 0xffff985b, WHITE = 0xffffffff;
+    static final long DEADLINE_MS = 55_000;
     static final Chat SESSION = new Chat();
     private final Handler ui = new Handler(Looper.getMainLooper());
     private final java.util.concurrent.ExecutorService worker = Executors.newCachedThreadPool();
@@ -20,6 +22,10 @@ final class Chat {
     private int generation;
     private boolean busy;
     private java.util.concurrent.Future<?> task;
+    private Providers.Cancellation cancellation;
+    private Runnable deadline;
+    private String pending = "";
+    private String retryPrompt = "";
     private String error = "";
     private String lastModel = "";
     private final java.util.Set<Runnable> observers = new java.util.HashSet<>();
@@ -47,31 +53,48 @@ final class Chat {
         var view = new Button(c);
         view.setAllCaps(false);
         view.setText(title);
-        view.setTextColor(primary ? BG : WHITE);
+        view.setTextColor(INK);
+        view.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        view.setPadding(dp(c, 12), 0, dp(c, 12), 0);
         view.setMinHeight(dp(c, 48));
         view.setMinimumWidth(0);
-        view.setBackground(shape(c, primary ? MINT : CARD, 12));
+        view.setBackground(new android.graphics.drawable.RippleDrawable(
+            android.content.res.ColorStateList.valueOf(0x24632fc2), shape(c, primary ? ORANGE : CARD, 14), null));
         view.setOnClickListener(v -> action.run());
         return view;
     }
 
     void refresh() { for (Runnable observer : observers.toArray(new Runnable[0])) observer.run(); }
     void stop() {
-        generation++;
-        if (task != null) task.cancel(true);
-        task = null;
-        busy = false;
+        cancel();
+        pending = "";
+        error = "Permintaan dihentikan.";
         refresh();
     }
-    void clear() { history = new JSONArray(); error = ""; lastModel = ""; stop(); }
 
-    private boolean send(Context context, String prompt) {
+    private void cancel() {
+        generation++;
+        if (deadline != null) ui.removeCallbacks(deadline);
+        if (task != null) task.cancel(true);
+        if (cancellation != null) cancellation.cancel();
+        task = null;
+        cancellation = null;
+        busy = false;
+    }
+
+    void clear() {
+        cancel();
+        history = new JSONArray();
+        pending = error = lastModel = retryPrompt = "";
+        refresh();
+    }
+
+    boolean send(Context context, String prompt) {
         if (busy || prompt.isEmpty()) return false;
-        Context app = context.getApplicationContext();
         try {
-            Providers.Profile profile = Providers.load(app, Providers.active(app));
-            if (profile.model().trim().isEmpty()) {
-                error = "Atur API dan pilih mode model terlebih dulu.";
+            Providers.Profile profile = Providers.load(context, Providers.active(context));
+            if (profile.model().isEmpty()) {
+                error = "Atur API dan pilih model terlebih dulu.";
                 refresh();
                 return false;
             }
@@ -80,39 +103,60 @@ final class Chat {
                 request.put(history.getJSONObject(i));
             }
             request.put(new JSONObject().put("role", "user").put("content", prompt));
-            int ticket = generation;
+            int ticket = ++generation;
             String previousModel = lastModel;
+            var call = new Providers.Cancellation();
+            cancellation = call;
+            pending = prompt;
+            retryPrompt = prompt;
             busy = true;
             error = "";
+            deadline = () -> fail(ticket, "API belum merespons setelah 55 detik. Coba lagi atau pilih model yang lebih cepat.");
+            ui.postDelayed(deadline, DEADLINE_MS);
             refresh();
             task = worker.submit(() -> {
                 try {
-                    Providers.Answer answer = Providers.complete(profile, request, previousModel);
+                    Providers.Answer answer = Providers.complete(profile, request, previousModel, call);
                     var reply = new JSONObject().put("role", "assistant").put("content", answer.text());
                     ui.post(() -> {
                         if (ticket != generation) return;
+                        ui.removeCallbacks(deadline);
+                        task = null;
+                        cancellation = null;
                         history = request.put(reply);
                         lastModel = answer.model();
+                        pending = retryPrompt = "";
                         busy = false;
                         refresh();
                     });
                 } catch (Exception exception) {
-                    String message = exception instanceof IllegalStateException ? exception.getMessage()
-                        : "Koneksi atau respons API bermasalah. Cek endpoint dan jaringan.";
-                    ui.post(() -> {
-                        if (ticket != generation) return;
-                        busy = false;
-                        error = message;
-                        refresh();
-                    });
+                    ui.post(() -> fail(ticket, describe(exception)));
                 }
             });
             return true;
         } catch (Exception exception) {
+            cancel();
+            pending = "";
             error = "Pengaturan API tidak bisa dibuka. Simpan ulang API key.";
             refresh();
             return false;
         }
+    }
+
+    private void fail(int ticket, String message) {
+        if (ticket != generation || !busy) return;
+        cancel();
+        pending = "";
+        error = message;
+        refresh();
+    }
+
+    private static String describe(Exception error) {
+        if (error instanceof java.net.SocketTimeoutException) return "Provider terlalu lama merespons. Coba lagi.";
+        if (error instanceof java.net.UnknownHostException) return "Alamat API tidak ditemukan. Periksa URL dan internet.";
+        if (error instanceof javax.net.ssl.SSLException) return "Koneksi HTTPS ke provider gagal.";
+        if (error instanceof IllegalStateException && error.getMessage() != null) return error.getMessage();
+        return "Koneksi atau respons API bermasalah. Periksa jaringan dan model.";
     }
 
     LinearLayout panel(Context c, String closeTitle, Runnable close, Runnable settings) {
@@ -120,10 +164,10 @@ final class Chat {
         int pad = dp(c, 14);
         root.setPadding(pad, pad, pad, pad);
         root.setBackground(shape(c, BG, 20));
-        var title = label(c, "Omni Float AI", 23, WHITE);
+        var title = label(c, "Omni Float AI", 23, INK);
         title.setTypeface(Typeface.DEFAULT_BOLD);
         root.addView(title);
-        var status = label(c, "", 13, MINT);
+        var status = label(c, "", 13, PURPLE);
         root.addView(status);
 
         var controls = new LinearLayout(c);
@@ -135,6 +179,8 @@ final class Chat {
         root.addView(controls, spacer);
         var stop = button(c, "Stop generation", false, this::stop);
         root.addView(stop);
+        var retry = button(c, "Coba lagi", false, () -> send(c, retryPrompt));
+        root.addView(retry);
 
         var scroll = new ScrollView(c);
         var transcript = column(c);
@@ -143,8 +189,11 @@ final class Chat {
         var feedback = label(c, "", 13, MUTED);
         root.addView(feedback);
         var composer = new LinearLayout(c);
+        composer.setGravity(android.view.Gravity.CENTER_VERTICAL);
         var input = new EditText(c);
-        input.setTextColor(WHITE);
+        input.setTextColor(INK);
+        input.setBackground(shape(c, CARD, 14));
+        input.setPadding(pad, dp(c, 10), pad, dp(c, 10));
         input.setHintTextColor(MUTED);
         input.setHint("Tulis pesan");
         input.setTextSize(15);
@@ -159,14 +208,15 @@ final class Chat {
         Runnable render = () -> {
             int provider = Providers.active(c);
             String model = Providers.prefs(c).getString("model" + provider, "");
-            if (Providers.AUTO.equals(model)) model = lastModel.isEmpty() ? "Otomatis" : "Otomatis ? " + lastModel;
-            status.setText(Providers.NAMES[provider] + (model.isEmpty() ? "" : "  ?  " + model));
-            feedback.setText(busy ? "Menunggu jawaban." : error);
+            if (Providers.AUTO.equals(model)) model = lastModel.isEmpty() ? "Otomatis" : "Otomatis / " + lastModel;
+            status.setText(Providers.NAMES[provider] + (model.isEmpty() ? "" : "  /  " + model));
+            feedback.setText(busy ? "Menunggu respons dari " + Providers.NAMES[provider] + "…" : error);
             feedback.setVisibility(busy || !error.isEmpty() ? View.VISIBLE : View.GONE);
             send.setEnabled(!busy);
+            retry.setVisibility(!busy && !retryPrompt.isEmpty() ? View.VISIBLE : View.GONE);
             stop.setVisibility(busy ? View.VISIBLE : View.GONE);
             transcript.removeAllViews();
-            if (history.length() == 0) {
+            if (history.length() == 0 && pending.isEmpty()) {
                 var empty = label(c, "Apa yang mau kamu tanyakan?", 16, MUTED);
                 empty.setPadding(0, pad, 0, pad);
                 transcript.addView(empty);
@@ -174,13 +224,19 @@ final class Chat {
             for (int i = 0; i < history.length(); i++) {
                 JSONObject entry = history.optJSONObject(i);
                 boolean user = "user".equals(entry.optString("role"));
-                var message = label(c, (user ? "Kamu\n" : "AI\n") + entry.optString("content"), 15, WHITE);
+                var message = label(c, (user ? "Kamu\n" : "AI\n") + entry.optString("content"), 15, INK);
                 message.setTextIsSelectable(true);
                 message.setPadding(pad, pad, pad, pad);
-                message.setBackground(shape(c, user ? 0xff174039 : CARD, 12));
+                message.setBackground(shape(c, user ? 0xffffe3cf : CARD, 12));
                 var params = new LinearLayout.LayoutParams(-1, -2);
                 params.topMargin = dp(c, 8);
                 transcript.addView(message, params);
+            }
+            if (!pending.isEmpty()) {
+                var sending = label(c, "Kamu\n" + pending, 15, INK);
+                sending.setPadding(pad, pad, pad, pad);
+                sending.setBackground(shape(c, 0xffffe3cf, 12));
+                transcript.addView(sending);
             }
             scroll.post(() -> scroll.fullScroll(View.FOCUS_DOWN));
         };

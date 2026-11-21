@@ -200,3 +200,4 @@ final class ScreenAssist {
     void destroy() { release(true); worker.shutdownNow(); }
 }
 
+

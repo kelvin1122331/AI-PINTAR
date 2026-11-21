@@ -21,6 +21,7 @@ public final class BubbleService extends Service {
     private final Runnable dismissTranslation = this::clearTranslation;
     private int bubbleX;
     private int bubbleY;
+    static boolean active;
     private boolean started;
     private boolean discreet;
     private boolean toolsTab;
@@ -56,6 +57,7 @@ public final class BubbleService extends Service {
         else if (Build.VERSION.SDK_INT >= 29) startForeground(1, notification, 0);
         else startForeground(1, notification);
         started = true;
+        active = true;
         windows = getSystemService(WindowManager.class);
         assist = new ScreenAssist(this);
         quiz = new QuizRunner(this);
@@ -108,7 +110,9 @@ public final class BubbleService extends Service {
         p.x = bubbleX;
         p.y = bubbleY;
         Button bubble = Chat.button(this, "AI", true, () -> { discreet = false; showPanel(); });
-        bubble.setBackground(Chat.shape(this, Chat.MINT, 28));
+        var bubbleFill = Chat.shape(this, Chat.ORANGE, 28);
+        bubbleFill.setStroke(Chat.dp(this, 2), Chat.PURPLE);
+        bubble.setBackground(bubbleFill);
         bubble.setAlpha(discreet ? 0.12f : 1f);
         bubble.setContentDescription("Buka chat Omni Float AI");
         bubble.setOnLongClickListener(v -> { stopSelf(); return true; });
@@ -162,7 +166,9 @@ public final class BubbleService extends Service {
         var shell = Chat.column(this);
         int pad = Chat.dp(this, 8);
         shell.setPadding(pad, pad, pad, pad);
-        shell.setBackground(Chat.shape(this, Chat.BG, 20));
+        var panelSurface = Chat.shape(this, Chat.BG, 24);
+        panelSurface.setStroke(Chat.dp(this, 2), 0xffd7bafa);
+        shell.setBackground(panelSurface);
         var nav = new android.widget.LinearLayout(this);
         nav.addView(Chat.button(this, "Chatbot", !toolsTab, () -> { toolsTab = false; showPanel(); }),
             new android.widget.LinearLayout.LayoutParams(0, -2, 1));
@@ -181,7 +187,7 @@ public final class BubbleService extends Service {
             var panel = Chat.column(this);
             scroll.addView(panel);
             shell.addView(scroll, new android.widget.LinearLayout.LayoutParams(-1, 0, 1));
-            currentResult = Chat.label(this, result, 15, Chat.WHITE);
+            currentResult = Chat.label(this, result, 15, Chat.INK);
             currentResult.setTextIsSelectable(true);
             panel.addView(currentResult);
             panel.addView(Chat.label(this, "Tangkapan layar dikirim ke API aktif. Gunakan model yang menerima gambar.", 13, Chat.MUTED));
@@ -294,6 +300,7 @@ public final class BubbleService extends Service {
     }
 
     @Override public void onDestroy() {
+        active = false;
         if (assist != null) assist.destroy();
         if (quiz != null) quiz.destroy();
         clearTranslation();
@@ -302,4 +309,5 @@ public final class BubbleService extends Service {
         super.onDestroy();
     }
 }
+
 

@@ -65,3 +65,4 @@ final class TranslationOverlay extends View {
         }
     }
 }
+

@@ -32,6 +32,20 @@ final class Providers {
         boolean automatic() { return AUTO.equals(model); }
     }
     record Answer(String text, String model) {}
+    static final class Cancellation {
+        private volatile boolean cancelled;
+        private volatile HttpsURLConnection connection;
+        void attach(HttpsURLConnection value) throws InterruptedException {
+            connection = value;
+            if (cancelled) throw new InterruptedException();
+        }
+        void detach() { connection = null; }
+        void cancel() {
+            cancelled = true;
+            HttpsURLConnection pending = connection;
+            if (pending != null) new Thread(pending::disconnect, "omni-api-cancel").start();
+        }
+    }
     private static final class ApiException extends IllegalStateException {
         final boolean modelUnavailable;
         ApiException(String message, boolean modelUnavailable) {
@@ -115,7 +129,11 @@ final class Providers {
     }
 
     static java.util.List<String> models(Profile profile) throws Exception {
-        JSONObject payload = request(modelsUrl(profile), profile.key(), null);
+        return models(profile, null);
+    }
+
+    private static java.util.List<String> models(Profile profile, Cancellation cancellation) throws Exception {
+        JSONObject payload = request(modelsUrl(profile), profile.key(), null, cancellation);
         JSONArray data = payload.getJSONArray("data");
         var ids = new java.util.LinkedHashSet<String>();
         for (int i = 0; i < data.length(); i++) {
@@ -147,16 +165,20 @@ final class Providers {
     }
 
     static Answer complete(Profile profile, JSONArray messages, String lastModel) throws Exception {
-        if (!profile.automatic()) return completeOne(profile, profile.model(), messages);
+        return complete(profile, messages, lastModel, null);
+    }
+
+    static Answer complete(Profile profile, JSONArray messages, String lastModel, Cancellation cancellation) throws Exception {
+        if (!profile.automatic()) return completeOne(profile, profile.model(), messages, cancellation);
         var candidates = new java.util.LinkedHashSet<String>();
         if (!lastModel.isEmpty()) {
             try {
-                return completeOne(profile, lastModel, messages);
+                return completeOne(profile, lastModel, messages, cancellation);
             } catch (ApiException error) {
                 if (!error.modelUnavailable) throw error;
             }
         }
-        var listed = models(profile);
+        var listed = models(profile, cancellation);
         listed.sort(java.util.Comparator.comparingInt(Providers::priority));
         candidates.addAll(listed);
         candidates.remove(lastModel);
@@ -164,7 +186,7 @@ final class Providers {
         for (String model : candidates) {
             if (attempts++ == 5) break;
             try {
-                return completeOne(profile, model, messages);
+                return completeOne(profile, model, messages, cancellation);
             } catch (ApiException error) {
                 if (!error.modelUnavailable) throw error;
             }
@@ -180,22 +202,36 @@ final class Providers {
         return rank;
     }
 
-    private static Answer completeOne(Profile profile, String model, JSONArray messages) throws Exception {
+    private static Answer completeOne(Profile profile, String model, JSONArray messages, Cancellation cancellation) throws Exception {
         var body = new JSONObject().put("model", model).put("messages", messages).put("stream", false);
-        JSONObject response = request(validateEndpoint(profile.endpoint()), profile.key(), body);
-        Object content = response.getJSONArray("choices").getJSONObject(0).getJSONObject("message").get("content");
-        if (!(content instanceof String answer) || answer.trim().isEmpty()) {
+        JSONObject response = request(validateEndpoint(profile.endpoint()), profile.key(), body, cancellation);
+        JSONArray choices = response.optJSONArray("choices");
+        JSONObject choice = choices == null ? null : choices.optJSONObject(0);
+        JSONObject message = choice == null ? null : choice.optJSONObject("message");
+        if (message == null) throw new IllegalStateException("Respons API tidak berisi jawaban chat.");
+        Object content = message.opt("content");
+        String answer = content instanceof String value ? value : "";
+        if (content instanceof JSONArray parts) {
+            StringBuilder text = new StringBuilder();
+            for (int i = 0; i < parts.length(); i++) {
+                JSONObject part = parts.optJSONObject(i);
+                if (part != null) text.append(part.optString("text", ""));
+            }
+            answer = text.toString();
+        }
+        if (answer.trim().isEmpty()) {
             throw new IllegalStateException("Provider tidak mengembalikan jawaban teks.");
         }
         return new Answer(answer, model);
     }
 
-    private static JSONObject request(URL url, String key, JSONObject body) throws Exception {
+    private static JSONObject request(URL url, String key, JSONObject body, Cancellation cancellation) throws Exception {
         if (Thread.currentThread().isInterrupted()) throw new InterruptedException();
         HttpsURLConnection connection = (HttpsURLConnection) url.openConnection();
         try {
-            connection.setConnectTimeout(12000);
-            connection.setReadTimeout(body == null ? 15000 : 60000);
+            if (cancellation != null) cancellation.attach(connection);
+            connection.setConnectTimeout(10000);
+            connection.setReadTimeout(body == null ? 12000 : 45000);
             connection.setInstanceFollowRedirects(false);
             if (!key.isEmpty()) connection.setRequestProperty("Authorization", "Bearer " + key);
             if (body != null) {
@@ -218,6 +254,7 @@ final class Providers {
             }
             return new JSONObject(read(connection.getInputStream(), 8_000_000));
         } finally {
+            if (cancellation != null) cancellation.detach();
             connection.disconnect();
         }
     }
