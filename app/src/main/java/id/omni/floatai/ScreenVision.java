@@ -14,12 +14,16 @@ final class ScreenVision {
     private final Handler ui = new Handler(Looper.getMainLooper());
     private final java.util.concurrent.ExecutorService worker = Executors.newCachedThreadPool();
     private Providers.Cancellation call;
-    private final Runnable deadline = () -> {
-        cancel();
-        service.visionResult("Analisis layar melewati batas 55 detik.", false);
-    };
+    private final Runnable deadline;
     private volatile int revision;
-    ScreenVision(BubbleService service) { this.service = service; }
+
+    ScreenVision(BubbleService service) {
+        this.service = service;
+        deadline = () -> {
+            cancel();
+            service.visionResult("Analisis layar melewati batas 55 detik.", false);
+        };
+    }
 
     void analyze(Bitmap frame, int mode) {
         cancel();
