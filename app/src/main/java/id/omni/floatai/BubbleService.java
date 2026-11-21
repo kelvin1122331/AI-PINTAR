@@ -261,8 +261,10 @@ public final class BubbleService extends Service {
             panel.addView(currentResult);
 
             var capture = OmniUi.card(this, panel, "Layar & kamera");
-            OmniUi.toolRow(capture, assist.running() ? "Nonaktifkan Terjemah Layar" : "Aktifkan Terjemah Layar",
-                assist.paused() ? "Sedang dijeda" : "Terjemahan di atas aplikasi aktif", "Aa", this::toggleTranslation);
+            OmniUi.addSpace(capture, Chat.button(this, assist.running()
+                ? "Nonaktifkan Terjemah Layar" : "Aktifkan Terjemah Layar", !assist.running(), this::toggleTranslation), 8);
+            OmniUi.addSpace(capture, OmniUi.caption(this, assist.paused()
+                ? "Sedang dijeda" : "Terjemahan di atas aplikasi aktif"), 4);
             if (assist.running()) {
                 var row = new android.widget.LinearLayout(this);
                 OmniUi.rowButton(row, assist.locked() ? "Buka kunci hasil" : "Kunci hasil", false, () -> {
@@ -407,7 +409,15 @@ public final class BubbleService extends Service {
     private void askForCapture(boolean startTranslation) {
         if (startTranslation) pendingVision = -1;
         startTranslationAfterConsent = startTranslation;
-        startActivity(new Intent(this, CaptureConsent.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        try {
+            startActivity(new Intent(this, CaptureConsent.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+            showBubble();
+        } catch (android.content.ActivityNotFoundException | SecurityException error) {
+            startTranslationAfterConsent = false;
+            pendingVision = -1;
+            screenStatus("Dialog akses layar tidak dapat dibuka.");
+            restorePanel();
+        }
     }
 
     private void toggleTranslation() {
