@@ -164,8 +164,8 @@ public final class Toolbox extends Activity {
 
     private void saveNote() {
         if (last.isEmpty()) { feedback.setText("Buat materi terlebih dulu."); return; }
-        StudyNotes.save(this, last);
-        feedback.setText("Disimpan ke catatan.");
+        feedback.setText(StudyNotes.save(this, last) ? "Disimpan ke catatan."
+            : "Semua 30 catatan disematkan. Lepas satu sematan untuk menyimpan catatan baru.");
     }
 
     private void notes() {
@@ -322,7 +322,7 @@ public final class Toolbox extends Activity {
         } else if (request == IMPORT_CARDS) {
             worker.execute(() -> {
                 try {
-                    String value = LocalDocuments.readText(getContentResolver(), uri);
+                    String value = LocalDocuments.readDeck(getContentResolver(), uri);
                     runOnUiThread(() -> {
                         if (isDestroyed()) return;
                         int count = ReviewDeck.importTsv(this, value, System.currentTimeMillis());

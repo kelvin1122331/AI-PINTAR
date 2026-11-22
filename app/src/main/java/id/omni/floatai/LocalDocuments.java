@@ -15,6 +15,7 @@ import java.nio.charset.StandardCharsets;
 
 final class LocalDocuments {
     private static final int MAX_TEXT_BYTES = 128_000;
+    private static final int MAX_DECK_BYTES = 1_000_000;
     private static final int IMAGE_LIMIT = 1920;
 
     static Intent open(String type) {
@@ -26,12 +27,20 @@ final class LocalDocuments {
     }
 
     static String readText(ContentResolver resolver, Uri uri) throws IOException {
+        return readUtf8(resolver, uri, MAX_TEXT_BYTES);
+    }
+
+    static String readDeck(ContentResolver resolver, Uri uri) throws IOException {
+        return readUtf8(resolver, uri, MAX_DECK_BYTES);
+    }
+
+    private static String readUtf8(ContentResolver resolver, Uri uri, int limit) throws IOException {
         try (var in = resolver.openInputStream(uri); var out = new ByteArrayOutputStream()) {
             if (in == null) throw new IOException("Dokumen tidak dapat dibuka.");
             byte[] bytes = new byte[4096];
             int count;
             while ((count = in.read(bytes)) != -1) {
-                if (out.size() + count > MAX_TEXT_BYTES) throw new IOException("Dokumen melebihi 128 KB.");
+                if (out.size() + count > limit) throw new IOException("Berkas melebihi batas ukuran.");
                 out.write(bytes, 0, count);
             }
             String value = new String(out.toByteArray(), StandardCharsets.UTF_8);

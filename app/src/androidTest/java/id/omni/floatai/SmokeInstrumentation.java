@@ -123,6 +123,13 @@ public class SmokeInstrumentation extends Instrumentation {
         require(StudyNotes.find(context, "catatan").get(0).pinned(), "existing notes can be pinned ahead of newer notes");
         StudyNotes.pin(context, "Catatan lama", false);
         require(StudyNotes.find(context, "").get(0).text().equals("Catatan baru"), "unpin restores note order");
+        for (int index = 0; index < 30; index++) {
+            String pinnedNote = "Sematan " + index;
+            StudyNotes.save(context, pinnedNote);
+            StudyNotes.pin(context, pinnedNote, true);
+        }
+        require(!StudyNotes.save(context, "Catatan ke-31") && StudyNotes.find(context, "").size() == 30,
+            "a full set of pinned notes reports that saving needs space");
 
         var pair = new TranslationLibrary.Pair("en", "id");
         TranslationLibrary.savePair(context, pair, false);
@@ -194,6 +201,12 @@ public class SmokeInstrumentation extends Instrumentation {
         var uri = android.net.Uri.fromFile(fixture);
         LocalDocuments.writeText(context.getContentResolver(), uri, "Catatan belajarku");
         require(LocalDocuments.readText(context.getContentResolver(), uri).equals("Catatan belajarku"), "TXT export/import roundtrip");
+        var largeDeck = new StringBuilder("Depan\tBelakang\n");
+        for (int index = 0; index < 110; index++) largeDeck.append("Nomor ").append(index).append('\t')
+            .append("pañ".repeat(600)).append('\n');
+        LocalDocuments.writeText(context.getContentResolver(), uri, largeDeck.toString());
+        require(LocalDocuments.readDeck(context.getContentResolver(), uri).contentEquals(largeDeck),
+            "card files can be reimported even when they exceed the smaller notes import limit");
         android.graphics.Bitmap base = Bitmap.createBitmap(800, 400, Bitmap.Config.ARGB_8888);
         var draw = new Canvas(base);
         draw.drawColor(0xffffffff);

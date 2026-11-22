@@ -26,7 +26,7 @@ final class StudyNotes {
         return notes;
     }
 
-    static void save(Context context, String text) {
+    static boolean save(Context context, String text) {
         var notes = load(context);
         boolean pinned = notes.stream().anyMatch(note -> note.pinned() && note.text().equals(text));
         notes.removeIf(note -> note.text().equals(text));
@@ -34,9 +34,11 @@ final class StudyNotes {
         while (notes.size() > 30) {
             int oldest = notes.size() - 1;
             while (oldest > 0 && notes.get(oldest).pinned()) oldest--;
+            if (oldest == 0) return false;
             notes.remove(oldest);
         }
         persist(context, notes);
+        return true;
     }
 
     static void pin(Context context, String text, boolean pinned) {
