@@ -19,40 +19,41 @@ import java.nio.ByteBuffer;
 final class ScreenAssist {
     private static final int COLUMNS = 48;
     private static final int ROWS = 80;
+    private static final long SAMPLE_GAP = 140;
     private final BubbleService service;
     private final Handler ui = new Handler(Looper.getMainLooper());
-    private final DeviceTranslator translator = new DeviceTranslator();
+    private final DeviceTranslator translator;
+    private final StableTranslation overlay = new StableTranslation();
     private final Runnable recognize = this::recognizeLatest;
+    private final Runnable pulse = this::askForFrame;
+    private final Runnable snapshotTimeout = this::expireSnapshot;
     private MediaProjection projection;
     private ImageReader reader;
     private VirtualDisplay display;
-    private Bitmap latest;
+    private ScreenOptions.Crop latest;
     private java.util.function.Consumer<Bitmap> snapshot;
-    private final Runnable snapshotTimeout = () -> {
-        var callback = snapshot;
-        snapshot = null;
-        if (callback != null) callback.accept(null);
-    };
     private int[] signature;
     private int[] visibleSignature;
     private long settleUntil;
     private long captureAfter;
-    private boolean paused;
-    private boolean locked;
-    private int emptyReads;
-    private int displayWidth;
-    private int displayHeight;
-    private final Runnable pulse = () -> askForFrame();
     private long lastSample;
     private long lastChange;
+    private boolean forceSample;
+    private boolean paused;
+    private boolean locked;
     private boolean active;
     private boolean busy;
+    private int displayWidth;
+    private int displayHeight;
     private int run;
     private int revision;
 
-    ScreenAssist(BubbleService service) { this.service = service; }
+    ScreenAssist(BubbleService service) {
+        this.service = service;
+        translator = new DeviceTranslator(service);
+    }
 
-    boolean ready() { return projection != null; }
+    boolean ready() { return projection != null && display != null; }
     boolean running() { return active; }
     boolean paused() { return paused; }
     boolean locked() { return locked; }
@@ -63,26 +64,19 @@ final class ScreenAssist {
             projection = service.getSystemService(MediaProjectionManager.class)
                 .getMediaProjection(Activity.RESULT_OK, consent);
             MediaProjection session = projection;
-            projection.registerCallback(new MediaProjection.Callback() {
+            session.registerCallback(new MediaProjection.Callback() {
                 @Override public void onStop() {
                     if (projection != session) return;
                     release(false);
                     service.screenStatus("Izin akses layar berakhir.");
                 }
+
+                @Override public void onCapturedContentResize(int width, int height) {
+                    if (projection == session && ready()) resize(width, height, metrics().densityDpi);
+                }
             }, ui);
-            WindowManager windows = service.getSystemService(WindowManager.class);
-            var metrics = new android.util.DisplayMetrics();
-            windows.getDefaultDisplay().getRealMetrics(metrics);
-            displayWidth = metrics.widthPixels;
-            displayHeight = metrics.heightPixels;
-            int longest = Math.max(displayWidth, displayHeight);
-            float scale = Math.min(1f, 1920f / longest);
-            int width = Math.max(1, Math.round(metrics.widthPixels * scale));
-            int height = Math.max(1, Math.round(metrics.heightPixels * scale));
-            reader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2);
-            reader.setOnImageAvailableListener(this::onFrame, ui);
-            display = projection.createVirtualDisplay("Omni Float AI", width, height, metrics.densityDpi,
-                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR, reader.getSurface(), null, ui);
+            var metrics = metrics();
+            setupReader(metrics.widthPixels, metrics.heightPixels, metrics.densityDpi);
             service.screenStatus("Akses layar aktif.");
         } catch (RuntimeException error) {
             release(true);
@@ -90,125 +84,188 @@ final class ScreenAssist {
         }
     }
 
+    private android.util.DisplayMetrics metrics() {
+        var dimensions = new android.util.DisplayMetrics();
+        service.getSystemService(WindowManager.class).getDefaultDisplay().getRealMetrics(dimensions);
+        return dimensions;
+    }
+
+    void displayChanged() {
+        if (!ready()) return;
+        var dimensions = metrics();
+        resize(dimensions.widthPixels, dimensions.heightPixels, dimensions.densityDpi);
+    }
+
+    private void resize(int width, int height, int density) {
+        if (width < 1 || height < 1 || (width == displayWidth && height == displayHeight)) return;
+        try {
+            setupReader(width, height, density);
+            overlay.reset();
+            service.clearTranslation();
+            resetSamples();
+        } catch (RuntimeException error) {
+            release(true);
+            service.screenStatus("Ukuran layar berubah. Aktifkan kembali izin layar.");
+        }
+    }
+
+    private void setupReader(int width, int height, int density) {
+        float scale = Math.min(1f, 1920f / Math.max(width, height));
+        int scaledWidth = Math.max(1, Math.round(width * scale));
+        int scaledHeight = Math.max(1, Math.round(height * scale));
+        ImageReader next = ImageReader.newInstance(scaledWidth, scaledHeight, PixelFormat.RGBA_8888, 2);
+        try {
+            next.setOnImageAvailableListener(this::onFrame, ui);
+            if (display == null) {
+                display = projection.createVirtualDisplay("Omni Float AI", scaledWidth, scaledHeight, density,
+                    DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR, next.getSurface(), null, ui);
+                if (display == null) throw new IllegalStateException("Display unavailable");
+            } else {
+                display.resize(scaledWidth, scaledHeight, density);
+                display.setSurface(next.getSurface());
+            }
+        } catch (RuntimeException error) {
+            next.close();
+            throw error;
+        }
+        if (reader != null) reader.close();
+        reader = next;
+        displayWidth = width;
+        displayHeight = height;
+    }
+
     void start() {
         if (!ready() || active) return;
         active = true;
         run++;
-        revision++;
-        service.screenStatus("Terjemah aktif. Membaca layar.");
+        service.screenStatus("Membaca teks di layar…");
         service.showBubbleForTranslation();
+        overlay.reset();
         service.clearTranslation();
         resetSamples();
         service.refreshNotification();
     }
 
     private void askForFrame() {
-        // Changing a tiny element in the overlay asks the display compositor for a fresh frame.
         service.refreshCapture();
+    }
+
+    private boolean canTranslate() {
+        return active && !paused && !locked && !service.translationPaused();
     }
 
     private void onFrame(ImageReader source) {
         if (source != reader) return;
+        Bitmap working = null;
         try (Image image = source.acquireLatestImage()) {
             if (image == null) return;
-            if (snapshot != null && SystemClock.uptimeMillis() >= captureAfter) {
-                Bitmap frame = copy(image);
-                var callback = snapshot;
-                snapshot = null;
-                ui.removeCallbacks(snapshotTimeout);
-                callback.accept(frame);
+            long now = SystemClock.uptimeMillis();
+            if (snapshot != null && now >= captureAfter) {
+                deliverSnapshot(copy(image));
                 return;
             }
-            if (!active || paused || locked || service.translationPaused()) return;
-            long now = SystemClock.uptimeMillis();
-            if (now < settleUntil) return;
-            if (visibleSignature != null && now - lastSample < 144) {
+            if (!canTranslate() || now < settleUntil) return;
+            if (lastSample > 0 && now - lastSample < SAMPLE_GAP) {
                 ui.removeCallbacks(pulse);
-                ui.postAtTime(pulse, lastSample + 150);
+                ui.postAtTime(pulse, lastSample + SAMPLE_GAP + 8);
                 return;
             }
             lastSample = now;
-            Bitmap imageBitmap = copy(image);
-            int[] visible = signature(imageBitmap);
-            if (!ScreenScene.changed(visibleSignature, visible)) {
-                imageBitmap.recycle();
-                return;
-            }
+            working = copy(image);
+            int[] visible = ScreenScene.signature(working, COLUMNS, ROWS);
+            if (!forceSample && !ScreenScene.changed(visibleSignature, visible)) return;
             visibleSignature = visible;
-            service.restoreTranslationBackground(imageBitmap, displayWidth, displayHeight);
-            int[] current = signature(imageBitmap);
-            if (!ScreenScene.changed(signature, current)) {
-                imageBitmap.recycle();
-                return;
-            }
+            service.restoreTranslationBackground(working, displayWidth, displayHeight);
+            var crop = ScreenOptions.crop(working, ScreenOptions.read(service).area());
+            working = crop.bitmap();
+            int[] current = ScreenScene.signature(working, COLUMNS, ROWS);
+            boolean moved = ScreenScene.changed(signature, current);
+            if (!forceSample && !moved) return;
+            forceSample = false;
+            if (moved) overlay.moved();
             signature = current;
-            latest(imageBitmap);
+            setLatest(crop);
+            working = null;
             revision++;
             lastChange = now;
             ui.removeCallbacks(recognize);
-            ui.postDelayed(recognize, 240);
+            ui.postDelayed(recognize, ScreenOptions.read(service).quietMillis());
         } catch (RuntimeException error) {
-            cancel();
-            service.screenStatus("Tangkapan layar tidak bisa dibaca.");
+            if (snapshot != null) expireSnapshot();
+            if (active) {
+                service.screenStatus("Satu tangkapan gagal dibaca. Terjemahan terakhir tetap ditampilkan.");
+                scheduleRetry(run, 2000);
+            }
+        } finally {
+            if (working != null && !working.isRecycled()) working.recycle();
         }
     }
 
     private void recognizeLatest() {
-        if (!active || paused || locked || busy || latest == null || service.translationPaused()) return;
-        long remaining = 240 - (SystemClock.uptimeMillis() - lastChange);
+        if (!canTranslate() || busy || latest == null) return;
+        var settings = ScreenOptions.read(service);
+        long remaining = settings.quietMillis() - (SystemClock.uptimeMillis() - lastChange);
         if (remaining > 0) { ui.postDelayed(recognize, remaining); return; }
-        Bitmap frame = latest;
+        var crop = latest;
         latest = null;
         int session = run;
         int frameRevision = revision;
+        int[] scene = signature;
         busy = true;
-        translator.translate(frame, TranslationPreferences.source(service), TranslationPreferences.target(service), status -> {
-            if (session == run && active) service.screenStatus(status);
-        }, result -> {
-            busy = false;
-            if (session == run && active && !paused && !locked && frameRevision == revision && !service.translationPaused()) {
-                if (result.error() != null) {
-                    service.screenStatus(result.error());
-                    scheduleRetry(session, 4000);
-                } else if (!result.labels().isEmpty()) {
-                    emptyReads = 0;
-                    if (service.showTranslation(result.labels())) pauseForRender();
-                    service.screenStatus("Terjemah aktif / " + result.labels().size() + " bagian.");
-                } else if (!service.hasTranslation() || ++emptyReads >= 3) {
-                    service.clearTranslation();
-                    pauseForRender();
-                    service.screenStatus("Terjemah aktif. Belum ada teks baru yang perlu diterjemahkan.");
-                } else {
-                    scheduleRetry(session, 500);
+        translator.translate(crop.bitmap(), TranslationPreferences.source(service), TranslationPreferences.target(service),
+            settings.lines(), status -> {
+                if (session == run && active) service.screenStatus(status);
+            }, result -> {
+                busy = false;
+                if (session == run && canTranslate() && frameRevision == revision) {
+                    handleResult(crop, scene, settings, result, session);
                 }
-            }
-            recognizeLatest();
-        });
+                recognizeLatest();
+            });
+    }
+
+    private void handleResult(ScreenOptions.Crop crop, int[] scene, ScreenOptions.Settings settings,
+                              DeviceTranslator.Result result, int session) {
+        if (result.error() != null) {
+            service.screenStatus(result.error());
+            scheduleRetry(session, 4000);
+            return;
+        }
+        if (!result.labels().isEmpty()) {
+            var labels = crop.place(result.labels());
+            overlay.presented(scene);
+            if (service.showTranslation(labels)) pauseForRender();
+            service.screenStatus("Terjemah aktif · " + labels.size() + " bagian.");
+            return;
+        }
+        if (!service.hasTranslation()) {
+            service.screenStatus("Belum ada teks yang perlu diterjemahkan.");
+            return;
+        }
+        if (overlay.confirmEmpty(scene, SystemClock.uptimeMillis(), settings.blankHoldMillis())) {
+            overlay.reset();
+            service.clearTranslation();
+            pauseForRender();
+            service.screenStatus("Belum ada teks yang perlu diterjemahkan.");
+        } else if (overlay.needsConfirmation(scene)) {
+            scheduleRetry(session, 680);
+        }
     }
 
     private void scheduleRetry(int session, int delay) {
         int requested = revision;
         ui.postDelayed(() -> {
-            if (session != run || requested != revision || !active || paused || locked) return;
-            signature = null;
-            visibleSignature = null;
+            if (session != run || requested != revision || !canTranslate()) return;
+            forceSample = true;
             askForFrame();
         }, delay);
     }
 
     private void pauseForRender() {
-        settleUntil = SystemClock.uptimeMillis() + 165;
+        settleUntil = SystemClock.uptimeMillis() + 185;
         visibleSignature = null;
         ui.removeCallbacks(pulse);
-        ui.postAtTime(pulse, settleUntil + 10);
-    }
-
-    private static int[] signature(Bitmap bitmap) {
-        Bitmap sample = Bitmap.createScaledBitmap(bitmap, COLUMNS, ROWS, true);
-        int[] values = new int[COLUMNS * ROWS];
-        sample.getPixels(values, 0, COLUMNS, 0, 0, COLUMNS, ROWS);
-        if (sample != bitmap) sample.recycle();
-        return values;
+        ui.postAtTime(pulse, settleUntil + 15);
     }
 
     private static Bitmap copy(Image image) {
@@ -232,10 +289,19 @@ final class ScreenAssist {
         return writable;
     }
 
+    private void expireSnapshot() { deliverSnapshot(null); }
+
+    private void deliverSnapshot(Bitmap frame) {
+        var callback = snapshot;
+        snapshot = null;
+        ui.removeCallbacks(snapshotTimeout);
+        if (callback != null) callback.accept(frame);
+    }
+
     void snapshot(java.util.function.Consumer<Bitmap> callback) {
         cancel();
         ui.postDelayed(() -> {
-            if (snapshot == callback) service.refreshCapture();
+            if (snapshot == callback) askForFrame();
         }, 280);
         captureAfter = SystemClock.uptimeMillis() + 220;
         snapshot = callback;
@@ -258,20 +324,21 @@ final class ScreenAssist {
     }
 
     void refresh() {
-        if (!active || paused || locked) return;
+        if (!canTranslate()) return;
         resetSamples();
     }
 
     private void resetSamples() {
         revision++;
-        emptyReads = 0;
+        overlay.moved();
         signature = null;
-        latest(null);
+        forceSample = true;
+        setLatest(null);
         pauseForRender();
     }
 
-    private void latest(Bitmap frame) {
-        if (latest != null) latest.recycle();
+    private void setLatest(ScreenOptions.Crop frame) {
+        if (latest != null) latest.bitmap().recycle();
         latest = frame;
     }
 
@@ -279,12 +346,14 @@ final class ScreenAssist {
         active = false;
         paused = false;
         locked = false;
+        forceSample = false;
         snapshot = null;
         ui.removeCallbacks(snapshotTimeout);
         run++;
         ui.removeCallbacks(recognize);
         ui.removeCallbacks(pulse);
-        latest(null);
+        setLatest(null);
+        overlay.reset();
         signature = null;
         visibleSignature = null;
         service.clearTranslation();
@@ -302,5 +371,5 @@ final class ScreenAssist {
         if (stopProjection && old != null) old.stop();
     }
 
-    void destroy() { release(true); translator.close(); }
+    void destroy() { release(true); translator.close(); ui.removeCallbacksAndMessages(null); }
 }

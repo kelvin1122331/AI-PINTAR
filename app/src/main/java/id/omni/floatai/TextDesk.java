@@ -15,7 +15,8 @@ import java.util.concurrent.Executors;
 
 public final class TextDesk extends Activity {
     private static final int PHOTO = 520;
-    private static final int LIMIT = 4000;
+    private static final int EXPORT = 521;
+    static final int LIMIT = 4000;
     private final java.util.concurrent.ExecutorService files = Executors.newSingleThreadExecutor();
     private DeviceTranslator translator;
     private EditText input;
@@ -26,6 +27,7 @@ public final class TextDesk extends Activity {
     private SharedPreferences settings;
     private TranslationJournal.Entry latest;
     private int generation;
+    private String pendingExport;
     private boolean settingLanguages;
     private TextToSpeech voice;
     private boolean voiceReady;
@@ -34,7 +36,7 @@ public final class TextDesk extends Activity {
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
         settings = TranslationPreferences.of(this);
-        translator = new DeviceTranslator();
+        translator = new DeviceTranslator(this);
         var scroll = new ScrollView(this);
         scroll.setFillViewport(true);
         var root = Chat.column(this);
@@ -42,8 +44,8 @@ public final class TextDesk extends Activity {
         root.setBackgroundColor(Chat.BG);
         root.setPadding(pad, pad, pad, pad);
         Toolbox.applyInsets(root, pad);
-        root.addView(OmniUi.title(this, "Terjemahan", 30));
-        root.addView(OmniUi.caption(this, "Terjemah teks dan foto di perangkat."));
+        root.setFocusableInTouchMode(true);
+        OmniUi.pageHeader(root, "Terjemahan", "Teks, foto, dan kamus pribadi.");
         var workspace = OmniUi.card(this, root, "Teks dan foto");
         var lang = new LinearLayout(this);
         String[] sources = new String[TranslationPreferences.NAMES.length + 1];
@@ -80,6 +82,7 @@ public final class TextDesk extends Activity {
             status.setText("Disimpan ke favorit.");
         });
         OmniUi.addSpace(workspace, actions, 8);
+        OmniUi.addSpace(workspace, Chat.button(this, "Ekspor terjemahan TXT", false, this::export), 7);
         var library = OmniUi.card(this, root, "Tersimpan");
         var history = new Switch(this);
         history.setText("Simpan riwayat terjemahan manual");
@@ -90,6 +93,8 @@ public final class TextDesk extends Activity {
         OmniUi.rowButton(books, "Riwayat", false, () -> journal(false));
         OmniUi.rowButton(books, "Favorit", false, () -> journal(true));
         OmniUi.addSpace(library, books, 7);
+        OmniUi.toolRow(library, "Pasangan bahasa", "Simpan pengaturan bahasa yang sering dipakai", "⇄", this::pairs);
+        OmniUi.toolRow(library, "Kamus pribadi", "Gunakan padanan untuk frasa tertentu", "≡", this::glossary);
         var look = OmniUi.card(this, root, "Tampilan overlay");
         var scale = new TextView(this);
         scale.setTextColor(Chat.INK);
@@ -132,6 +137,20 @@ public final class TextDesk extends Activity {
         };
         from.setOnItemSelectedListener(listener);
         to.setOnItemSelectedListener(listener);
+        if (state != null) {
+            pendingExport = state.getString("export");
+            if (state.containsKey("translation")) {
+                latest = new TranslationJournal.Entry(state.getString("original", ""), state.getString("translation", ""),
+                    state.getString("source", source()), state.getString("target", target()));
+                output.setText(latest.translated());
+            }
+        } else if (getIntent().hasExtra("incoming_text")) {
+            input.setText(getIntent().getStringExtra("incoming_text"));
+            status.setText("Teks diterima. Ketuk Terjemahkan teks.");
+        } else if (getIntent().getData() != null) {
+            translatePhoto(getIntent().getData());
+        }
+        root.requestFocus();
     }
 
     private Spinner select(LinearLayout row, String label, String[] labels, int selection) {
@@ -192,8 +211,28 @@ public final class TextDesk extends Activity {
 
     @Override protected void onActivityResult(int request, int result, Intent data) {
         super.onActivityResult(request, result, data);
-        if (request != PHOTO || result != RESULT_OK || data == null || data.getData() == null) return;
+        String document = request == EXPORT ? pendingExport : null;
+        if (request == EXPORT) pendingExport = null;
+        if (result != RESULT_OK || data == null || data.getData() == null) return;
         var uri = data.getData();
+        if (request == PHOTO) translatePhoto(uri);
+        if (request == EXPORT && document != null) files.execute(() -> {
+            try {
+                LocalDocuments.writeText(getContentResolver(), uri, document);
+                runOnUiThread(() -> { if (!isDestroyed()) status.setText("Terjemahan disimpan sebagai TXT."); });
+            } catch (Exception error) {
+                runOnUiThread(() -> { if (!isDestroyed()) status.setText("Berkas terjemahan belum dapat disimpan."); });
+            }
+        });
+    }
+
+    private void export() {
+        if (latest == null) { status.setText("Terjemahkan teks terlebih dulu."); return; }
+        pendingExport = TranslationLibrary.bilingual(latest);
+        startActivityForResult(LocalDocuments.saveText("Terjemahan_Omni.txt"), EXPORT);
+    }
+
+    private void translatePhoto(android.net.Uri uri) {
         int ticket = ++generation;
         String fromCode = source(), toCode = target();
         status.setText("Membaca foto…");
@@ -228,27 +267,149 @@ public final class TextDesk extends Activity {
     private void journal(boolean favorites) {
         var results = TranslationJournal.read(this, favorites);
         if (results.isEmpty()) { status.setText(favorites ? "Belum ada favorit." : "Riwayat masih kosong."); return; }
-        var names = new String[results.size()];
-        for (int i = 0; i < names.length; i++) {
-            String preview = results.get(i).translated().replace('\n', ' ');
-            names[i] = preview.substring(0, Math.min(preview.length(), 95));
+        var panel = Chat.column(this);
+        int pad = Chat.dp(this, 16);
+        panel.setPadding(pad, pad, pad, 0);
+        var search = new EditText(this);
+        search.setHint("Cari teks asli atau terjemahan");
+        panel.addView(search);
+        var list = new ListView(this);
+        panel.addView(list, new LinearLayout.LayoutParams(-1, Chat.dp(this, 251)));
+        var matches = new java.util.ArrayList<TranslationJournal.Entry>();
+        var names = new ArrayAdapter<String>(this, android.R.layout.simple_list_item_1);
+        list.setAdapter(names);
+        Runnable filter = () -> {
+            matches.clear();
+            matches.addAll(TranslationLibrary.filter(results, search.getText().toString()));
+            names.setNotifyOnChange(false);
+            names.clear();
+            for (var entry : matches) names.add(preview(entry.translated(), 100));
+            names.notifyDataSetChanged();
+        };
+        search.addTextChangedListener(new android.text.TextWatcher() {
+            public void beforeTextChanged(CharSequence text, int start, int count, int after) {}
+            public void onTextChanged(CharSequence text, int start, int before, int count) { filter.run(); }
+            public void afterTextChanged(android.text.Editable value) {}
+        });
+        filter.run();
+        var dialog = new AlertDialog.Builder(this).setTitle(favorites ? "Favorit terjemahan" : "Riwayat terjemahan")
+            .setView(panel).setNegativeButton("Tutup", null).create();
+        list.setOnItemClickListener((view, row, position, id) -> {
+            var entry = matches.get(position);
+            dialog.dismiss();
+            new AlertDialog.Builder(this).setTitle("Terjemahan tersimpan").setMessage(TranslationLibrary.bilingual(entry))
+                .setPositiveButton("Buka", (d, w) -> openEntry(entry))
+                .setNeutralButton("Hapus", (d, w) -> {
+                    TranslationJournal.remove(this, favorites, entry);
+                    status.setText("Item dihapus.");
+                }).setNegativeButton("Tutup", null).show();
+        });
+        dialog.show();
+    }
+
+    private static String preview(String text, int limit) {
+        String row = text.replace('\n', ' ');
+        return row.length() <= limit ? row : row.substring(0, limit) + "…";
+    }
+
+    private void openEntry(TranslationJournal.Entry entry) {
+        generation++;
+        latest = entry;
+        setLanguages(entry.source(), entry.target());
+        input.setText(entry.original());
+        output.setText(entry.translated());
+        status.setText("Terjemahan tersimpan dibuka.");
+    }
+
+    private void pairs() {
+        var pairs = TranslationLibrary.pairs(this);
+        String[] labels = pairs.stream().map(TranslationLibrary.Pair::name).toArray(String[]::new);
+        var builder = new AlertDialog.Builder(this).setTitle("Pasangan bahasa")
+            .setPositiveButton("Simpan pasangan ini", (dialog, result) -> {
+                var pair = new TranslationLibrary.Pair(source(), target());
+                TranslationLibrary.savePair(this, pair, false);
+                status.setText(pair.name() + " disimpan.");
+            }).setNegativeButton("Tutup", null);
+        if (labels.length == 0) {
+            builder.setMessage("Simpan bahasa sumber dan tujuan yang sedang dipilih.");
+        } else {
+            builder.setItems(labels, (dialog, position) -> {
+                var entry = pairs.get(position);
+                generation++;
+                setLanguages(entry.source(), entry.target());
+                status.setText(entry.name() + " dipakai.");
+            });
         }
-        new AlertDialog.Builder(this).setTitle(favorites ? "Favorit terjemahan" : "Riwayat terjemahan")
-            .setItems(names, (dialog, index) -> {
-                var entry = results.get(index);
-                new AlertDialog.Builder(this).setTitle("Terjemahan tersimpan").setMessage(entry.translated())
-                    .setPositiveButton("Buka", (d, w) -> {
-                        generation++;
-                        latest = entry;
-                        setLanguages(entry.source(), entry.target());
-                        input.setText(entry.original());
-                        output.setText(entry.translated());
-                        status.setText("Terjemahan tersimpan dibuka.");
-                    }).setNeutralButton("Hapus", (d, w) -> {
-                        TranslationJournal.remove(this, favorites, entry);
-                        status.setText("Item dihapus.");
-                    }).setNegativeButton("Tutup", null).show();
-            }).setNegativeButton("Tutup", null).show();
+        var dialog = builder.create();
+        dialog.show();
+        if (labels.length > 0) dialog.getListView().setOnItemLongClickListener((parent, row, position, id) -> {
+            var entry = pairs.get(position);
+            dialog.dismiss();
+            new AlertDialog.Builder(this).setTitle(entry.name())
+                .setPositiveButton("Hapus pasangan", (confirmation, result) -> {
+                    TranslationLibrary.savePair(this, entry, true);
+                    status.setText("Pasangan bahasa dihapus.");
+                }).setNegativeButton("Batal", null).show();
+            return true;
+        });
+    }
+
+    private void glossary() {
+        var glossary = TranslationLibrary.glossary(this);
+        var labels = glossary.stream().map(entry -> preview(entry.original(), 32) + " → " + preview(entry.translated(), 32))
+            .toArray(String[]::new);
+        var builder = new AlertDialog.Builder(this).setTitle("Kamus pribadi")
+            .setPositiveButton("Tambah frasa", (dialog, result) -> addTerm()).setNegativeButton("Tutup", null);
+        if (labels.length == 0) builder.setMessage("Simpan frasa dan padanan untuk bahasa yang sedang dipilih.");
+        else builder.setItems(labels, (dialog, position) -> {
+            var term = glossary.get(position);
+            new AlertDialog.Builder(this).setTitle("Frasa kamus").setMessage(TranslationLibrary.bilingual(term))
+                .setNeutralButton("Hapus frasa", (details, result) -> {
+                    TranslationLibrary.saveTerm(this, term, true);
+                    status.setText("Frasa dihapus.");
+                }).setPositiveButton("Tutup", null).show();
+        });
+        builder.show();
+    }
+
+    private void addTerm() {
+        String detected = source();
+        if (detected.equals("auto") && latest != null) detected = latest.source();
+        if (detected.equals("auto") || detected.equals(target())) {
+            status.setText("Pilih dua bahasa yang berbeda untuk menyimpan frasa.");
+            return;
+        }
+        String fromCode = detected, toCode = target();
+        var panel = Chat.column(this);
+        int pad = Chat.dp(this, 16);
+        panel.setPadding(pad, pad, pad, 0);
+        panel.addView(OmniUi.caption(this, TranslationPreferences.name(fromCode) + " → " + TranslationPreferences.name(toCode)));
+        var original = termField("Frasa yang ingin diganti");
+        var translated = termField("Padanan yang akan dipakai");
+        panel.addView(original);
+        panel.addView(translated);
+        var dialog = new AlertDialog.Builder(this).setTitle("Tambah frasa").setView(panel)
+            .setPositiveButton("Simpan", null).setNegativeButton("Batal", null).create();
+        dialog.setOnShowListener(event -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(view -> {
+            var term = new TranslationJournal.Entry(original.getText().toString().trim(),
+                translated.getText().toString().trim(), fromCode, toCode);
+            if (!TranslationLibrary.saveTerm(this, term, false)) {
+                if (term.original().isEmpty()) original.setError("Isi frasa.");
+                if (term.translated().isEmpty()) translated.setError("Isi padanan.");
+                return;
+            }
+            status.setText("Frasa disimpan ke kamus.");
+            dialog.dismiss();
+        }));
+        dialog.show();
+    }
+
+    private EditText termField(String hint) {
+        var field = new EditText(this);
+        field.setHint(hint);
+        field.setSingleLine(true);
+        field.setFilters(new android.text.InputFilter[]{new android.text.InputFilter.LengthFilter(TranslationLibrary.MAX_TERM)});
+        return field;
     }
 
     private void speak() {
@@ -283,6 +444,13 @@ public final class TextDesk extends Activity {
 
     @Override protected void onSaveInstanceState(Bundle state) {
         state.putString("text", input.getText().toString());
+        state.putString("export", pendingExport);
+        if (latest != null) {
+            state.putString("original", latest.original());
+            state.putString("translation", latest.translated());
+            state.putString("source", latest.source());
+            state.putString("target", latest.target());
+        }
         super.onSaveInstanceState(state);
     }
 

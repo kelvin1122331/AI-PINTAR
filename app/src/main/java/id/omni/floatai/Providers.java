@@ -132,6 +132,18 @@ final class Providers {
         return models(profile, null);
     }
 
+    static int testCatalog(Profile profile, Cancellation cancellation) throws Exception {
+        long start = android.os.SystemClock.elapsedRealtime();
+        try {
+            int count = models(profile, cancellation).size();
+            ConnectionMonitor.record("Katalog model", start, null, 0, 0);
+            return count;
+        } catch (Exception error) {
+            ConnectionMonitor.record("Katalog model", start, ConnectionMonitor.describe(error), 0, 0);
+            throw error;
+        }
+    }
+
     private static java.util.List<String> models(Profile profile, Cancellation cancellation) throws Exception {
         JSONObject payload = request(modelsUrl(profile), profile.key(), null, cancellation);
         JSONArray data = payload.getJSONArray("data");
@@ -301,6 +313,7 @@ final class Providers {
         }
     }
 }
+
 
 
 

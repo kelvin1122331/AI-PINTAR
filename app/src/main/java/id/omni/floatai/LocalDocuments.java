@@ -22,7 +22,7 @@ final class LocalDocuments {
     }
     static Intent saveText(String name) {
         return new Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE)
-            .setType("text/plain").putExtra(Intent.EXTRA_TITLE, name);
+            .setType(name.endsWith(".tsv") ? "text/tab-separated-values" : "text/plain").putExtra(Intent.EXTRA_TITLE, name);
     }
 
     static String readText(ContentResolver resolver, Uri uri) throws IOException {

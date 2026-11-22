@@ -56,6 +56,67 @@ final class ReviewDeck {
         return count;
     }
 
+    record Stats(int total, int due, int longerInterval, long correct, long repeat) {}
+
+    static Stats stats(Context context, long now) {
+        var cards = read(context);
+        int due = 0, longerInterval = 0;
+        for (var card : cards) {
+            if (card.due() <= now) due++;
+            if (card.days() >= 7) longerInterval++;
+        }
+        var preferences = StudyTools.prefs(context);
+        return new Stats(cards.size(), due, longerInterval, preferences.getLong("cards_correct", 0),
+            preferences.getLong("cards_repeat", 0));
+    }
+
+    static String exportTsv(Context context) {
+        var output = new StringBuilder("Depan\tBelakang\n");
+        for (var card : read(context)) output.append(escape(card.front())).append('\t').append(escape(card.back())).append('\n');
+        return output.toString();
+    }
+
+    static int importTsv(Context context, String document, long now) {
+        var existing = new LinkedHashMap<String, Card>();
+        for (var card : read(context)) existing.put(key(card.front()), card);
+        int size = existing.size();
+        for (String line : document.split("\\r?\\n")) {
+            int split = line.indexOf('\t');
+            if (split < 1 || line.indexOf('\t', split + 1) >= 0) continue;
+            String front = unescape(line.substring(0, split)).trim();
+            String back = unescape(line.substring(split + 1)).trim();
+            if (front.isEmpty() || back.isEmpty() || front.length() > 600 || back.length() > 2000
+                || (front.equalsIgnoreCase("Depan") && back.equalsIgnoreCase("Belakang"))) continue;
+            if (existing.size() == 120) break;
+            existing.putIfAbsent(key(front), new Card(front, back, now, 0));
+        }
+        int added = existing.size() - size;
+        if (added > 0) write(context, new ArrayList<>(existing.values()));
+        return added;
+    }
+
+    private static String escape(String text) {
+        return text.replace("\\", "\\\\").replace("\r\n", "\n").replace("\r", "\n")
+            .replace("\n", "\\n").replace("\t", "\\t");
+    }
+
+    private static String unescape(String text) {
+        var output = new StringBuilder(text.length());
+        for (int i = 0; i < text.length(); i++) {
+            char ch = text.charAt(i);
+            if (ch == '\\' && i + 1 < text.length()) {
+                char next = text.charAt(i + 1);
+                if (next == 'n' || next == 't' || next == '\\') {
+                    output.append(next == 'n' ? '\n' : next == 't' ? '\t' : next);
+                    i++;
+                    continue;
+                }
+            }
+            output.append(ch);
+        }
+        return output.toString();
+    }
+
     static void grade(Context context, Card shown, boolean remembered, long now) {
         var all = read(context);
         for (int i = 0; i < all.size(); i++) {
@@ -64,20 +125,26 @@ final class ReviewDeck {
             int days = remembered ? Math.max(1, Math.min(30, card.days() * 2)) : 0;
             long due = now + (remembered ? days * DAY : 600_000L);
             all.set(i, new Card(card.front(), card.back(), due, days));
-            break;
+            var prefs = StudyTools.prefs(context);
+            String stat = remembered ? "cards_correct" : "cards_repeat";
+            write(prefs.edit().putLong(stat, prefs.getLong(stat, 0) + 1), all);
+            return;
         }
-        write(context, all);
     }
 
     private static String tidy(String value) { return value.replace("**", "").trim(); }
     private static String key(String front) { return front.trim().toLowerCase(Locale.ROOT); }
 
     private static void write(Context context, List<Card> cards) {
+        write(StudyTools.prefs(context).edit(), cards);
+    }
+
+    private static void write(android.content.SharedPreferences.Editor edit, List<Card> cards) {
         var out = new JSONArray();
         try {
             for (Card card : cards) out.put(new JSONObject().put("front", card.front()).put("back", card.back())
                 .put("due", card.due()).put("days", card.days()));
-            StudyTools.prefs(context).edit().putString("review_cards", out.toString()).apply();
+            edit.putString("review_cards", out.toString()).apply();
         } catch (org.json.JSONException error) {
             throw new IllegalArgumentException("Kartu tidak valid.", error);
         }

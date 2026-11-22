@@ -14,7 +14,9 @@ import java.util.Comparator;
 import java.util.List;
 
 final class TranslationOverlay extends View {
-    record Label(int x, int y, int width, int height, String value) {}
+    record Label(int x, int y, int width, int height, String value, String original) {
+        Label(int x, int y, int width, int height, String value) { this(x, y, width, height, value, ""); }
+    }
     private record Card(RectF bounds, StaticLayout text) {}
     private final ArrayList<Label> labels = new ArrayList<>();
     private final ArrayList<Card> cards = new ArrayList<>();

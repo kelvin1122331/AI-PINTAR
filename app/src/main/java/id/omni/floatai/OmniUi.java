@@ -18,6 +18,19 @@ final class OmniUi {
         return text;
     }
 
+    static void pageHeader(LinearLayout root, String title, String description) {
+        var context = root.getContext();
+        var header = Chat.column(context);
+        int pad = Chat.dp(context, 18);
+        header.setPadding(pad, pad, pad, pad);
+        header.setBackground(hero(context));
+        var heading = title(context, title, 25);
+        heading.setTextColor(Chat.WHITE);
+        header.addView(heading);
+        if (!description.isEmpty()) addSpace(header, Chat.label(context, description, 14, 0xfff1e6ff), 6);
+        root.addView(header, new LinearLayout.LayoutParams(-1, -2));
+    }
+
     static TextView caption(Context c, String value) {
         var text = Chat.label(c, value, 14, Chat.MUTED);
         text.setLineSpacing(Chat.dp(c, 2), 1f);

@@ -31,17 +31,7 @@ public final class MainActivity extends Activity {
         root.setPadding(pad, pad, pad, pad);
         scroll.addView(root);
 
-        var hero = Chat.column(this);
-        hero.setPadding(pad, pad, pad, pad);
-        hero.setBackground(OmniUi.hero(this));
-        var mark = new ImageView(this);
-        mark.setImageResource(R.drawable.omni);
-        hero.addView(mark, new LinearLayout.LayoutParams(Chat.dp(this, 36), Chat.dp(this, 36)));
-        var title = Chat.label(this, "Omni Float AI", 33, Chat.WHITE);
-        title.setTypeface(android.graphics.Typeface.create("sans-serif-medium", 0));
-        OmniUi.addSpace(hero, title, 7);
-        hero.addView(Chat.label(this, "Terjemahkan, baca layar, dan belajar.", 15, 0xfff1e6ff));
-        root.addView(hero);
+        OmniUi.pageHeader(root, "Omni Float AI", "Terjemah, baca layar, dan belajar.");
 
         var floating = OmniUi.card(this, root, "Asisten mengambang");
         floatingStatus = OmniUi.caption(this, "");
@@ -54,11 +44,15 @@ public final class MainActivity extends Activity {
         });
         OmniUi.addSpace(floating, controls, 11);
 
-        var tools = OmniUi.card(this, root, "Ruang AI");
-        OmniUi.toolRow(tools, "Terjemahan", "Teks, foto, riwayat, dan bahasa overlay", "Aa",
+        var translation = OmniUi.card(this, root, "Layar dan bahasa");
+        OmniUi.toolRow(translation, "Terjemahan", "Teks, foto, riwayat, dan kamus pribadi", "Aa",
             () -> startActivity(new Intent(this, TextDesk.class)));
-        OmniUi.toolRow(tools, "Kamera", "Terjemah langsung dari pratinjau kamera", "◉",
+        OmniUi.toolRow(translation, "Atur terjemah layar", "Kecepatan, area pembacaan, dan hasil terakhir", "≡",
+            () -> startActivity(new Intent(this, ScreenTools.class)));
+        OmniUi.toolRow(translation, "Kamera", "Baca teks, perbesar, atau bekukan gambar", "◉",
             () -> startActivity(new Intent(this, CameraTranslator.class)));
+
+        var tools = OmniUi.card(this, root, "Ruang AI");
         OmniUi.toolRow(tools, "Belajar", "Catatan, latihan, dan kartu ulasan", "▤", () -> openTool(0));
 
         var api = OmniUi.card(this, root, "Pengaturan");

@@ -2,9 +2,24 @@ package id.omni.floatai;
 
 final class ScreenScene {
     static boolean changed(int[] before, int[] after) {
+        return exceeds(before, after, Math.max(6, after.length / 220));
+    }
+
+    static boolean materiallyDifferent(int[] before, int[] after) {
+        return exceeds(before, after, Math.max(12, after.length / 135));
+    }
+
+    static int[] signature(android.graphics.Bitmap bitmap, int columns, int rows) {
+        android.graphics.Bitmap sample = android.graphics.Bitmap.createScaledBitmap(bitmap, columns, rows, true);
+        int[] values = new int[columns * rows];
+        sample.getPixels(values, 0, columns, 0, 0, columns, rows);
+        if (sample != bitmap) sample.recycle();
+        return values;
+    }
+
+    private static boolean exceeds(int[] before, int[] after, int threshold) {
         if (before == null || before.length != after.length) return true;
         int changed = 0;
-        int threshold = Math.max(6, after.length / 220);
         for (int i = 0; i < after.length; i++) {
             int a = before[i], b = after[i];
             int distance = Math.abs(((a >> 16) & 255) - ((b >> 16) & 255))

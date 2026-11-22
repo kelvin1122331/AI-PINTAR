@@ -70,6 +70,15 @@ public class SmokeInstrumentation extends Instrumentation {
                 var errors = ConnectionMonitor.history();
                 require(errors.get(errors.size() - 1).error() != null, "monitor records provider failures");
             }
+            var telemetry = ConnectionMonitor.history();
+            require(ConnectionMonitor.filtered(telemetry, 2, "FLASH").size() == 1
+                && ConnectionMonitor.filtered(telemetry, 1, "chat").size() == 10,
+                "connection filters status and model together");
+            requests.clear();
+            require(Providers.testCatalog(loaded, new Providers.Cancellation()) == 2 && requests.isEmpty(),
+                "catalog test uses only the model listing and sends no chat content");
+            var catalog = ConnectionMonitor.filtered(ConnectionMonitor.history(), 1, "katalog").get(0);
+            require(catalog.input() == 0 && catalog.output() == 0, "catalog monitor records zero message tokens");
             summary.putString("stream", "OMNI_SMOKE_PASS\n");
             finish(Activity.RESULT_OK, summary);
         } catch (Throwable failure) {
@@ -99,6 +108,78 @@ public class SmokeInstrumentation extends Instrumentation {
         TranslationJournal.remove(context, true, item);
         require(TranslationJournal.read(context, true).isEmpty() && TranslationJournal.read(context, false).size() == 1,
             "history and favorites are independent");
+
+        var totals = ReviewDeck.stats(context, now);
+        require(totals.total() == 2 && totals.due() == 0 && totals.correct() == 1 && totals.repeat() == 1,
+            "study statistics count reviews and due cards");
+        var imported = "Depan\tBelakang\nPengantar\tUrutan 1\\tUrutan 2\\nCatatan\nAwan\tDuplikat";
+        require(ReviewDeck.importTsv(context, imported, now) == 1, "TSV card import merges without duplicates");
+        var deck = ReviewDeck.exportTsv(context);
+        require(deck.contains("Urutan 1\\tUrutan 2\\nCatatan") && ReviewDeck.importTsv(context, deck, now) == 0,
+            "TSV export preserves tabs and line breaks in card content");
+        StudyTools.prefs(context).edit().putString("notes", new JSONArray().put("Catatan lama").toString()).apply();
+        StudyNotes.save(context, "Catatan baru");
+        StudyNotes.pin(context, "Catatan lama", true);
+        require(StudyNotes.find(context, "catatan").get(0).pinned(), "existing notes can be pinned ahead of newer notes");
+        StudyNotes.pin(context, "Catatan lama", false);
+        require(StudyNotes.find(context, "").get(0).text().equals("Catatan baru"), "unpin restores note order");
+
+        var pair = new TranslationLibrary.Pair("en", "id");
+        TranslationLibrary.savePair(context, pair, false);
+        TranslationLibrary.savePair(context, pair, false);
+        require(TranslationLibrary.pairs(context).equals(List.of(pair)), "language pair shortcuts persist without duplicates");
+        require(TranslationLibrary.filter(TranslationJournal.read(context, false), "GOOD  MORNING").size() == 1 &&
+                TranslationLibrary.filter(TranslationJournal.read(context, false), "Selamat").size() == 1,
+            "journal search matches source and translation");
+        require(TranslationLibrary.bilingual(item).contains("Good morning")
+                && TranslationLibrary.bilingual(item).contains("Selamat pagi"), "TXT translation includes both texts");
+
+        var term = new TranslationJournal.Entry("Helio station", "Pos Matahari", "en", "id");
+        require(TranslationLibrary.saveTerm(context, term, false), "personal glossary saves a matching language pair");
+        var local = new java.util.concurrent.ArrayBlockingQueue<DeviceTranslator.TextResult>(1);
+        runOnMainSync(() -> {
+            var localTranslator = new DeviceTranslator(context);
+            localTranslator.translateText("HELIO  STATION", "en", "id", note -> {}, result -> {
+                local.offer(result);
+                localTranslator.close();
+            });
+        });
+        var glossary = local.poll(5, java.util.concurrent.TimeUnit.SECONDS);
+        require(glossary != null && glossary.text().equals("Pos Matahari"), "manual translation applies glossary before loading a model");
+        TranslationLibrary.saveTerm(context, term, true);
+        require(TranslationLibrary.overrides(context, "en", "id").isEmpty(), "personal glossary terms can be removed");
+
+        var visual = new StableTranslation();
+        int[] presented = new int[3840];
+        java.util.Arrays.fill(presented, 0xfff9f9f9);
+        int[] samePage = presented.clone();
+        for (int i = 2; i < 12; i++) samePage[i] = 0xff151515;
+        visual.presented(presented);
+        for (int i = 0; i < 8; i++) require(!visual.confirmEmpty(samePage, 3000L * i, 2000),
+            "an empty OCR scan cannot erase the same scene / sample " + i);
+        int[] pageB = presented.clone();
+        java.util.Arrays.fill(pageB, 900, 1160, 0xff171717);
+        int[] pageC = presented.clone();
+        java.util.Arrays.fill(pageC, 1800, 2150, 0xff171717);
+        require(!visual.confirmEmpty(pageB, 30000, 2000) && !visual.confirmEmpty(pageC, 32000, 2000)
+            && !visual.confirmEmpty(pageC, 32400, 2000), "rapid viewport changes keep the previous overlay visible");
+        require(visual.confirmEmpty(pageC, 34200, 2000), "sustained empty OCR on a new screen clears stale labels");
+        var scoped = ScreenOptions.crop(Bitmap.createBitmap(400, 900, Bitmap.Config.ARGB_8888), 3);
+        var overlayLabel = new TranslationOverlay.Label(10, 200, 90, 100, "Terjemahan", "Source");
+        var placed = scoped.place(List.of(overlayLabel)).get(0);
+        require(scoped.bitmap().getHeight() == 450 && placed.y() == 600 && placed.height() == 50,
+            "scan area reads the selected section and aligns it to the full screen");
+        scoped.bitmap().recycle();
+        ScreenReadback.remember(List.of(placed, overlayLabel));
+        require(ScreenReadback.latest().get(0).y() == 200 && ScreenReadback.text(ScreenReadback.latest(), true).contains("Source\nTerjemahan"),
+            "screen readback sorts original and translated paragraphs");
+        ScreenReadback.clear();
+        var prefs = TranslationPreferences.of(context);
+        prefs.edit().putInt("screen_speed", 2).putInt("screen_opacity", 53).putInt("screen_format", 1).apply();
+        var settings = ScreenOptions.read(context);
+        require(settings.quietMillis() == 410 && settings.blankHoldMillis() == 3000 && settings.lines() && settings.opacity() == 53,
+            "screen preferences control speed, per-line mode, and opacity");
+        prefs.edit().remove("screen_speed").remove("screen_opacity").remove("screen_format").apply();
 
         File fixture = new File(context.getCacheDir(), "smoke.txt");
         var uri = android.net.Uri.fromFile(fixture);

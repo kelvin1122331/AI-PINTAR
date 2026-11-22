@@ -19,7 +19,17 @@
         </activity>
         <activity android:name=".CameraTranslator" android:exported="false"/>
         <activity android:name=".Toolbox" android:exported="false"/>
-        <activity android:name=".TextDesk" android:exported="false"/>
+        <activity android:name=".TextDesk" android:exported="false" android:windowSoftInputMode="adjustResize"/>
+        <activity android:name=".ScreenTools" android:exported="false"/>
+        <activity android:name=".ShareTranslation" android:exported="true"
+            android:noHistory="true" android:label="Terjemahkan dengan Omni" android:theme="@android:style/Theme.NoDisplay">
+            <intent-filter>
+                <action android:name="android.intent.action.SEND"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <data android:mimeType="text/plain"/>
+                <data android:mimeType="image/*"/>
+            </intent-filter>
+        </activity>
         <activity android:name=".CaptureConsent" android:exported="false" android:excludeFromRecents="true" android:taskAffinity="id.omni.floatai.capture" android:theme="@android:style/Theme.Translucent.NoTitleBar"/>
         <service android:name=".QuizAccessibility" android:label="Omni Float AI · Pilih opsi kuis"
             android:exported="true" android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">

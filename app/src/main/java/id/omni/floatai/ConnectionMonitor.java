@@ -21,6 +21,16 @@ final class ConnectionMonitor {
 
     record Summary(int total, int success, long medianMillis, long p95Millis, long input, long output) {}
 
+    static List<Entry> filtered(List<Entry> history, int outcome, String model) {
+        String term = model.trim().toLowerCase(java.util.Locale.ROOT);
+        var result = new ArrayList<Entry>();
+        for (Entry entry : history) {
+            if ((outcome == 1 && entry.error() != null) || (outcome == 2 && entry.error() == null)) continue;
+            if (entry.model().toLowerCase(java.util.Locale.ROOT).contains(term)) result.add(entry);
+        }
+        return result;
+    }
+
     static Summary summarize(List<Entry> entries) {
         var durations = new ArrayList<Long>();
         long input = 0, output = 0;

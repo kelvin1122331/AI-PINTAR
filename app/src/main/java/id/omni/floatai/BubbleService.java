@@ -11,6 +11,7 @@ import android.view.*;
 import android.widget.Button;
 
 public final class BubbleService extends Service {
+    static final String SCREEN_OPTIONS = "id.omni.floatai.SCREEN_OPTIONS";
     static final String APPEARANCE = "id.omni.floatai.APPEARANCE";
     static android.content.SharedPreferences appearance(android.content.Context context) {
         return context.getSharedPreferences("bubble_appearance", MODE_PRIVATE);
@@ -24,6 +25,7 @@ public final class BubbleService extends Service {
     private TranslationOverlay translation;
     private java.util.List<TranslationOverlay.Label> rendered = java.util.Collections.emptyList();
     private float translationOpacity;
+    private WindowManager.LayoutParams translationLayout;
     private boolean shuttingDown;
     private AlertDialog activeDialog;
     private boolean quizExpanded;
@@ -56,6 +58,7 @@ public final class BubbleService extends Service {
         if (started) {
             if (capture) connectCapture(intent);
             if (intent != null && APPEARANCE.equals(intent.getAction())) showBubble();
+            if (intent != null && SCREEN_OPTIONS.equals(intent.getAction())) updateTranslationOptions();
             if (intent != null && PAUSE.equals(intent.getAction()) && assist.running()) {
                 assist.setPaused(!assist.paused());
                 if (panelOpen && toolsTab) showPanel();
@@ -277,6 +280,9 @@ public final class BubbleService extends Service {
                 });
                 OmniUi.addSpace(capture, row, 7);
             }
+            OmniUi.toolRow(capture, "Atur terjemah layar", "Kecepatan, area, dan tampilan", "Aa", () -> openScreenTools(false));
+            if (!ScreenReadback.latest().isEmpty())
+                OmniUi.toolRow(capture, "Hasil layar terakhir", "Buka teks asli dan hasil terjemah", "≡", () -> openScreenTools(true));
             OmniUi.toolRow(capture, "Terjemah Kamera", "Baca tulisan di sekitar", "◉", () -> openTool(CameraTranslator.class, 0, ""));
             OmniUi.toolRow(capture, "AI Smart Screen Vision", "Kirim satu tangkapan layar untuk dianalisis", "◈", this::visionOptions);
             if (!visionText.isEmpty()) {
@@ -347,6 +353,13 @@ public final class BubbleService extends Service {
         if (assist.running()) assist.cancel();
         startActivity(new Intent(this, screen).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             .putExtra("tab", tab).putExtra("studyText", text));
+    }
+
+    private void openScreenTools(boolean readback) {
+        if (assist.running()) assist.cancel();
+        showBubble();
+        startActivity(new Intent(this, ScreenTools.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            .putExtra("readback", readback));
     }
 
     private void visionOptions() {
@@ -457,7 +470,9 @@ public final class BubbleService extends Service {
     }
 
     boolean showTranslation(java.util.List<TranslationOverlay.Label> labels) {
-        if (panelOpen || labels.isEmpty() || OmniUi.sameLabels(rendered, labels, 7)) return false;
+        if (panelOpen || labels.isEmpty()) return false;
+        ScreenReadback.remember(labels);
+        if (OmniUi.sameLabels(rendered, labels, 7)) return false;
         if (translation != null) {
             translation.setLabels(labels);
             rendered = labels;
@@ -466,16 +481,14 @@ public final class BubbleService extends Service {
         var layer = new TranslationOverlay(this, labels);
         var layout = params(-1, -1, WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
             | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN);
-        float maxOpacity = Build.VERSION.SDK_INT >= 31
-            ? getSystemService(android.hardware.input.InputManager.class).getMaximumObscuringOpacityForTouch() : 0.8f;
-        // Keep enough of the original pixel signal to avoid recognizing the overlay as a new page.
-        layout.alpha = Math.min(0.70f, Math.max(0f, maxOpacity - 0.09f));
+        layout.alpha = preferredTranslationOpacity();
         layout.setTitle("Omni Float Translation");
         if (Build.VERSION.SDK_INT >= 30) layout.setFitInsetsTypes(0);
         try {
             windows.addView(layer, layout);
             translation = layer;
             translationOpacity = layout.alpha;
+            translationLayout = layout;
             rendered = labels;
             showBubble();
             return true;
@@ -485,21 +498,36 @@ public final class BubbleService extends Service {
         }
     }
 
+    private float preferredTranslationOpacity() {
+        float maximum = Build.VERSION.SDK_INT >= 31
+            ? getSystemService(android.hardware.input.InputManager.class).getMaximumObscuringOpacityForTouch() : 0.8f;
+        return Math.min(ScreenOptions.read(this).opacity() / 100f, Math.max(0f, maximum - .09f));
+    }
+
+    private void updateTranslationOptions() {
+        if (translation != null && translationLayout != null) {
+            translationLayout.alpha = preferredTranslationOpacity();
+            try {
+                windows.updateViewLayout(translation, translationLayout);
+                translationOpacity = translationLayout.alpha;
+                translation.setLabels(rendered);
+            } catch (IllegalArgumentException error) { clearTranslation(); }
+        }
+        assist.refresh();
+    }
+
     void clearTranslation() {
         if (translation != null) {
             windows.removeViewImmediate(translation);
             translation = null;
+            translationLayout = null;
         }
         rendered = java.util.Collections.emptyList();
     }
 
     @Override public void onConfigurationChanged(android.content.res.Configuration config) {
         super.onConfigurationChanged(config);
-        clearTranslation();
-        if (assist != null && assist.ready()) {
-            assist.release(true);
-            screenStatus("Ukuran layar berubah. Aktifkan kembali akses layar.");
-        }
+        if (assist != null) assist.displayChanged();
         if (quiz != null) quiz.cancel();
     }
 
@@ -521,6 +549,7 @@ public final class BubbleService extends Service {
         shuttingDown = true;
         if (activeDialog != null) activeDialog.dismiss();
         if (assist != null) assist.destroy();
+        ScreenReadback.clear();
         if (quiz != null) quiz.destroy();
         if (vision != null) vision.destroy();
         clearTranslation();

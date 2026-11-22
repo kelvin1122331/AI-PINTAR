@@ -28,7 +28,10 @@ public final class Toolbox extends Activity {
     private final Runnable update = this::refreshMonitor;
     private static final int IMPORT_TEXT = 621;
     private static final int EXPORT_TEXT = 622;
+    private static final int IMPORT_CARDS = 623;
     private String pendingExport;
+    private int monitorOutcome;
+    private String monitorModel = "";
     private TextView monitorSummary;
 
     static void copy(Context context, String text) {
@@ -51,6 +54,8 @@ public final class Toolbox extends Activity {
         if (state != null) {
             pendingExport = state.getString("export");
             last = state.getString("result", "");
+            monitorOutcome = state.getInt("outcome", 0);
+            monitorModel = state.getString("modelFilter", "");
         }
         render(state != null ? state.getInt("tab", 0) : getIntent().getIntExtra("tab", 0));
     }
@@ -65,7 +70,11 @@ public final class Toolbox extends Activity {
         root.setPadding(pad, pad, pad, pad);
         applyInsets(root, pad);
         root.setBackgroundColor(Chat.BG);
-        root.addView(OmniUi.title(this, "Ruang AI", 28));
+        OmniUi.pageHeader(root, "Ruang AI", switch (page) {
+            case 1 -> "Cek respons penyedia dan model.";
+            case 2 -> "Sesuaikan tombol floating.";
+            default -> "Olah materi, simpan catatan, dan ulas kartu.";
+        });
         var tabs = new LinearLayout(this);
         OmniUi.rowButton(tabs, "Belajar", page == 0, () -> render(0));
         OmniUi.rowButton(tabs, "Koneksi", page == 1, () -> render(1));
@@ -133,6 +142,11 @@ public final class Toolbox extends Activity {
                 : added + " kartu masuk ke jadwal ulasan.");
         });
         button("Ulas kartu hari ini", false, this::review);
+        var deckActions = new LinearLayout(this);
+        OmniUi.rowButton(deckActions, "Impor kartu TSV", false, () -> startActivityForResult(LocalDocuments.open("*/*"), IMPORT_CARDS));
+        OmniUi.rowButton(deckActions, "Ekspor kartu TSV", false, this::exportDeck);
+        OmniUi.addSpace(body, deckActions, 8);
+        button("Statistik belajar", false, this::reviewStats);
         button("Belajar 25 menit", false, this::timer);
     }
 
@@ -150,61 +164,75 @@ public final class Toolbox extends Activity {
 
     private void saveNote() {
         if (last.isEmpty()) { feedback.setText("Buat materi terlebih dulu."); return; }
-        var prefs = StudyTools.prefs(this);
-        try {
-            var old = new org.json.JSONArray(prefs.getString("notes", "[]"));
-            var notes = new org.json.JSONArray().put(last);
-            for (int i = 0; i < Math.min(29, old.length()); i++) notes.put(old.getString(i));
-            prefs.edit().putString("notes", notes.toString()).apply();
-            feedback.setText("Disimpan ke catatan.");
-        } catch (Exception error) { feedback.setText("Catatan belum dapat disimpan."); }
+        StudyNotes.save(this, last);
+        feedback.setText("Disimpan ke catatan.");
     }
 
     private void notes() {
-        var prefs = StudyTools.prefs(this);
-        try {
-            var items = new org.json.JSONArray(prefs.getString("notes", "[]"));
-            if (items.length() == 0) { feedback.setText("Belum ada catatan."); return; }
-            var panel = Chat.column(this);
-            int pad = Chat.dp(this, 16);
-            panel.setPadding(pad, 0, pad, 0);
-            var search = new EditText(this);
-            search.setHint("Cari isi catatan");
-            panel.addView(search);
-            var list = new ListView(this);
-            panel.addView(list, new LinearLayout.LayoutParams(-1, Chat.dp(this, 280)));
-            var matches = new ArrayList<String>();
-            var adapter = new ArrayAdapter<String>(this, android.R.layout.simple_list_item_1);
-            list.setAdapter(adapter);
-            Runnable filter = () -> {
-                adapter.setNotifyOnChange(false);
-                adapter.clear();
-                matches.clear();
-                String query = search.getText().toString().trim().toLowerCase(java.util.Locale.ROOT);
-                for (int i = 0; i < items.length(); i++) {
-                    String entry = items.optString(i);
-                    if (!entry.toLowerCase(java.util.Locale.ROOT).contains(query)) continue;
-                    matches.add(entry);
-                    String line = entry.replace('\n', ' ');
-                    adapter.add(line.substring(0, Math.min(line.length(), 90)));
-                }
-                adapter.notifyDataSetChanged();
-            };
-            search.addTextChangedListener(new TextWatcher() {
-                public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
-                public void onTextChanged(CharSequence s, int start, int before, int count) { filter.run(); }
-                public void afterTextChanged(Editable s) {}
-            });
-            filter.run();
-            var dialog = new AlertDialog.Builder(this).setTitle("Catatan tersimpan").setView(panel)
-                .setNegativeButton("Tutup", null).create();
-            list.setOnItemClickListener((v, row, index, rowId) -> {
-                last = matches.get(index);
-                answer.setText(last);
-                dialog.dismiss();
-            });
-            dialog.show();
-        } catch (Exception error) { feedback.setText("Catatan belum dapat dibuka."); }
+        if (StudyNotes.find(this, "").isEmpty()) { feedback.setText("Belum ada catatan."); return; }
+        var panel = Chat.column(this);
+        int pad = Chat.dp(this, 16);
+        panel.setPadding(pad, 0, pad, 0);
+        var search = new EditText(this);
+        search.setHint("Cari isi catatan");
+        panel.addView(search);
+        panel.addView(OmniUi.caption(this, "Tahan catatan untuk menyematkannya."));
+        var list = new ListView(this);
+        panel.addView(list, new LinearLayout.LayoutParams(-1, Chat.dp(this, 280)));
+        var matches = new ArrayList<StudyNotes.Note>();
+        var adapter = new ArrayAdapter<String>(this, android.R.layout.simple_list_item_1);
+        list.setAdapter(adapter);
+        Runnable filter = () -> {
+            adapter.setNotifyOnChange(false);
+            adapter.clear();
+            matches.clear();
+            matches.addAll(StudyNotes.find(this, search.getText().toString()));
+            for (var note : matches) {
+                String line = note.text().replace('\n', ' ');
+                adapter.add((note.pinned() ? "★  " : "") + line.substring(0, Math.min(line.length(), 90)));
+            }
+            adapter.notifyDataSetChanged();
+        };
+        search.addTextChangedListener(new TextWatcher() {
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+            public void onTextChanged(CharSequence s, int start, int before, int count) { filter.run(); }
+            public void afterTextChanged(Editable s) {}
+        });
+        filter.run();
+        var dialog = new AlertDialog.Builder(this).setTitle("Catatan tersimpan").setView(panel)
+            .setNegativeButton("Tutup", null).create();
+        list.setOnItemClickListener((v, row, index, rowId) -> {
+            last = matches.get(index).text();
+            answer.setText(last);
+            dialog.dismiss();
+        });
+        list.setOnItemLongClickListener((v, row, index, rowId) -> {
+            var note = matches.get(index);
+            String action = note.pinned() ? "Lepas sematan" : "Sematkan catatan";
+            new AlertDialog.Builder(this).setTitle(action).setMessage(note.pinned() ? "Kembalikan catatan ke urutan biasa."
+                : "Tampilkan catatan ini di atas daftar.").setPositiveButton(action, (confirm, which) -> {
+                    StudyNotes.pin(this, note.text(), !note.pinned());
+                    filter.run();
+                }).setNegativeButton("Batal", null).show();
+            return true;
+        });
+        dialog.show();
+    }
+
+    private void reviewStats() {
+        var totals = ReviewDeck.stats(this, System.currentTimeMillis());
+        String details = totals.total() + " kartu tersimpan\n"
+            + totals.due() + " kartu siap diulas\n"
+            + totals.longerInterval() + " kartu dengan interval ≥ 7 hari\n\n"
+            + "Dinilai ingat · " + totals.correct() + "\n"
+            + "Diminta ulang · " + totals.repeat();
+        new AlertDialog.Builder(this).setTitle("Statistik belajar").setMessage(details)
+            .setPositiveButton("Tutup", null).show();
+    }
+
+    private void exportDeck() {
+        if (ReviewDeck.read(this).isEmpty()) { showFeedback("Belum ada kartu untuk diekspor."); return; }
+        export("Omni_Kartu.tsv", ReviewDeck.exportTsv(this));
     }
 
     private void review() {
@@ -291,12 +319,24 @@ public final class Toolbox extends Activity {
                     });
                 } catch (Exception error) { runOnUiThread(() -> showFeedback("File TXT tidak dapat dibuka atau melebihi 128 KB.")); }
             });
+        } else if (request == IMPORT_CARDS) {
+            worker.execute(() -> {
+                try {
+                    String value = LocalDocuments.readText(getContentResolver(), uri);
+                    runOnUiThread(() -> {
+                        if (isDestroyed()) return;
+                        int count = ReviewDeck.importTsv(this, value, System.currentTimeMillis());
+                        showFeedback(count == 0 ? "Tidak ada kartu baru. Periksa dua kolom TSV dan kartu duplikat."
+                            : count + " kartu berhasil diimpor.");
+                    });
+                } catch (Exception error) { runOnUiThread(() -> showFeedback("File kartu belum dapat dibaca.")); }
+            });
         } else if (request == EXPORT_TEXT && exported != null) {
             worker.execute(() -> {
                 try {
                     LocalDocuments.writeText(getContentResolver(), uri, exported);
-                    runOnUiThread(() -> showFeedback("File TXT tersimpan."));
-                } catch (Exception error) { runOnUiThread(() -> showFeedback("File TXT belum tersimpan.")); }
+                    runOnUiThread(() -> showFeedback("File berhasil disimpan."));
+                } catch (Exception error) { runOnUiThread(() -> showFeedback("File belum berhasil disimpan.")); }
             });
         }
     }
@@ -324,6 +364,8 @@ public final class Toolbox extends Activity {
         state.putInt("tab", tab);
         state.putString("export", pendingExport);
         state.putString("result", last);
+        state.putInt("outcome", monitorOutcome);
+        state.putString("modelFilter", monitorModel);
         super.onSaveInstanceState(state);
     }
 
@@ -354,7 +396,32 @@ public final class Toolbox extends Activity {
         button("Tes koneksi AI", true, () -> request("Mengirim ping ke model aktif.",
             () -> new org.json.JSONArray().put(new org.json.JSONObject().put("role", "user").put("content", "Jawab hanya: OK")),
             text -> { feedback.setText("Provider merespons."); refreshMonitor(); }));
-        button("Ekspor laporan TXT", false, () -> export("Omni_Koneksi.txt", ConnectionMonitor.report(ConnectionMonitor.history())));
+        button("Tes katalog model", false, () -> startRequest("Memuat katalog model…",
+            (profile, cancellation) -> Providers.testCatalog(profile, cancellation) + " model chat tersedia.",
+            message -> { feedback.setText(message); refreshMonitor(); }));
+        var filter = picker("Filter permintaan", new String[]{"Semua status", "Berhasil", "Gagal"}, monitorOutcome);
+        filter.setContentDescription("Filter status koneksi");
+        filter.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            public void onNothingSelected(AdapterView<?> view) {}
+            public void onItemSelected(AdapterView<?> view, View row, int index, long id) {
+                monitorOutcome = index;
+                refreshMonitor();
+            }
+        });
+        var model = new EditText(this);
+        model.setHint("Cari model");
+        model.setSingleLine(true);
+        model.setText(monitorModel);
+        model.addTextChangedListener(new TextWatcher() {
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+            public void onTextChanged(CharSequence s, int start, int before, int count) {
+                monitorModel = s.toString();
+                refreshMonitor();
+            }
+            public void afterTextChanged(Editable s) {}
+        });
+        body.addView(model);
+        button("Ekspor laporan TXT", false, () -> export("Omni_Koneksi.txt", ConnectionMonitor.report(filteredHistory())));
         button("Bersihkan riwayat", false, () -> { ConnectionMonitor.clear(); refreshMonitor(); });
         metrics = Chat.label(this, "", 14, Chat.INK);
         metrics.setTextIsSelectable(true);
@@ -362,15 +429,20 @@ public final class Toolbox extends Activity {
         refreshMonitor();
     }
 
+    private java.util.List<ConnectionMonitor.Entry> filteredHistory() {
+        return ConnectionMonitor.filtered(ConnectionMonitor.history(), monitorOutcome, monitorModel);
+    }
+
     private void refreshMonitor() {
         ui.removeCallbacks(update);
         if (tab != 1 || metrics == null) return;
-        var history = ConnectionMonitor.history();
+        var history = filteredHistory();
         var score = ConnectionMonitor.summarize(history);
         monitorSummary.setText(score.total() == 0 ? "Belum ada data koneksi" : score.success() * 100 / score.total()
             + "% berhasil · " + score.total() + " permintaan\nMedian " + score.medianMillis() + " ms · p95 " + score.p95Millis() + " ms");
         Collections.reverse(history);
-        if (history.isEmpty()) metrics.setText("Belum ada permintaan AI pada sesi ini.");
+        if (history.isEmpty()) metrics.setText(ConnectionMonitor.history().isEmpty()
+            ? "Belum ada permintaan AI pada sesi ini." : "Tidak ada permintaan yang cocok dengan filter.");
         else {
             var text = new StringBuilder("Estimasi token untuk teks. Gambar tidak dihitung.\n");
             for (var event : history) {
@@ -428,8 +500,16 @@ public final class Toolbox extends Activity {
     }
 
     private interface Messages { org.json.JSONArray get() throws Exception; }
+    private interface Request { String send(Providers.Profile profile, Providers.Cancellation cancel) throws Exception; }
 
     private void request(String waiting, Messages messages, java.util.function.Consumer<String> success) {
+        startRequest(waiting, (profile, cancellation) -> {
+            if (profile.model().isEmpty()) throw new IllegalStateException("Atur model dan API key terlebih dulu.");
+            return Providers.complete(profile, messages.get(), "", cancellation).text();
+        }, success);
+    }
+
+    private void startRequest(String waiting, Request action, java.util.function.Consumer<String> success) {
         cancel();
         int ticket = revision;
         feedback.setText(waiting);
@@ -443,12 +523,11 @@ public final class Toolbox extends Activity {
         task = worker.submit(() -> {
             try {
                 var profile = Providers.load(this, Providers.active(this));
-                if (profile.model().isEmpty()) throw new IllegalStateException("Atur model dan API key terlebih dulu.");
-                var result = Providers.complete(profile, messages.get(), "", cancellation);
+                String result = action.send(profile, cancellation);
                 ui.post(() -> {
                     if (ticket != revision) return;
                     call = null;
-                    success.accept(result.text());
+                    success.accept(result);
                 });
             } catch (Exception error) {
                 ui.post(() -> {
