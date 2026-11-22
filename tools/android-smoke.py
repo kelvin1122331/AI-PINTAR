@@ -307,7 +307,7 @@ def test_connection():
 
 
 def test_share_text():
-    print(adb('shell', 'am', 'start', '-W', '-n', PACKAGE + '/.ShareTranslation',
+    print(adb('shell', 'am', 'start', '-W', '-n', PACKAGE + '/.TextDesk',
               '-a', 'android.intent.action.SEND', '-t', 'text/plain',
               '--es', 'android.intent.extra.TEXT', 'Good_morning_from_share'), flush=True)
     require('Good_morning_from_share')
@@ -316,7 +316,9 @@ def test_share_text():
 
 
 def test_share_image():
-    print(adb('shell', 'am', 'start', '-W', '-n', TEST, '--es', 'fixture', 'image'), flush=True)
+    share_fixture = PACKAGE + '.test/id.omni.floatai.ShareImageFixture'
+    print(adb('shell', 'am', 'start', '-n', share_fixture), flush=True)
+    tap('Bagikan contoh foto')
     deadline = time.monotonic() + 85
     while time.monotonic() < deadline:
         actual = [item.get('text') or '' for item in nodes()]

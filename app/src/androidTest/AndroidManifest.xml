@@ -2,6 +2,7 @@
     <application>
         <activity android:name="id.omni.floatai.EnglishFixture" android:exported="true"
             android:theme="@android:style/Theme.Material.Light.NoActionBar"/>
+        <activity android:name="id.omni.floatai.ShareImageFixture" android:exported="true"/>
         <provider android:name="id.omni.floatai.FixtureImageProvider"
             android:authorities="${applicationId}.fixture" android:exported="false" android:grantUriPermissions="true"/>
     </application>

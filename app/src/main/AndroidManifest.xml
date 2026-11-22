@@ -19,10 +19,9 @@
         </activity>
         <activity android:name=".CameraTranslator" android:exported="false"/>
         <activity android:name=".Toolbox" android:exported="false"/>
-        <activity android:name=".TextDesk" android:exported="false" android:windowSoftInputMode="adjustResize"/>
         <activity android:name=".ScreenTools" android:exported="false"/>
-        <activity android:name=".ShareTranslation" android:exported="true"
-            android:noHistory="true" android:label="Terjemahkan dengan Omni" android:theme="@android:style/Theme.NoDisplay">
+        <activity android:name=".TextDesk" android:exported="true" android:windowSoftInputMode="adjustResize"
+            android:label="Terjemahkan dengan Omni">
             <intent-filter>
                 <action android:name="android.intent.action.SEND"/>
                 <category android:name="android.intent.category.DEFAULT"/>

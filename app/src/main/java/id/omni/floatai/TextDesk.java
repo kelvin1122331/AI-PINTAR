@@ -28,6 +28,7 @@ public final class TextDesk extends Activity {
     private TranslationJournal.Entry latest;
     private int generation;
     private String pendingExport;
+    private android.net.Uri pendingPhoto;
     private boolean settingLanguages;
     private TextToSpeech voice;
     private boolean voiceReady;
@@ -121,13 +122,38 @@ public final class TextDesk extends Activity {
                     state.getString("source", source()), state.getString("target", target()));
                 output.setText(latest.translated());
             }
-        } else if (getIntent().hasExtra("incoming_text")) {
-            input.setText(getIntent().getStringExtra("incoming_text"));
-            status.setText("Teks diterima. Ketuk Terjemahkan teks.");
-        } else if (getIntent().getData() != null) {
-            translatePhoto(getIntent().getData());
+            var previousPhoto = state.getParcelable("pending_photo");
+            if (previousPhoto instanceof android.net.Uri uri) translatePhoto(uri);
+        } else {
+            importSharedContent(getIntent());
         }
         root.requestFocus();
+    }
+
+    @Override protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        importSharedContent(intent);
+    }
+
+    private void importSharedContent(Intent intent) {
+        var content = SharedTranslation.read(intent);
+        if (content == null) return;
+        if (content.text() == null && content.image() == null) {
+            status.setText("Teks atau foto yang dibagikan belum dapat dibuka.");
+            return;
+        }
+        generation++;
+        pendingPhoto = null;
+        latest = null;
+        output.setText("");
+        if (content.image() != null) {
+            input.setText("");
+            translatePhoto(content.image());
+        } else {
+            input.setText(content.text());
+            status.setText("Teks diterima. Ketuk Terjemahkan teks.");
+        }
     }
 
     private Spinner select(LinearLayout row, String label, String[] labels, int selection) {
@@ -180,6 +206,7 @@ public final class TextDesk extends Activity {
         String text = input.getText().toString().trim();
         if (text.isEmpty()) { status.setText("Masukkan teks terlebih dulu."); return; }
         updateLanguages();
+        pendingPhoto = null;
         int ticket = ++generation;
         String toCode = target();
         status.setText("Menerjemahkan…");
@@ -210,6 +237,7 @@ public final class TextDesk extends Activity {
     }
 
     private void translatePhoto(android.net.Uri uri) {
+        pendingPhoto = uri;
         int ticket = ++generation;
         String fromCode = source(), toCode = target();
         status.setText("Membaca foto…");
@@ -220,11 +248,19 @@ public final class TextDesk extends Activity {
                     if (ticket != generation || isDestroyed()) { bitmap.recycle(); return; }
                     translator.translatePhoto(bitmap, fromCode, toCode,
                         message -> update(ticket, message), translated -> {
-                            if (ticket == generation && !translated.original().isEmpty()) input.setText(translated.original());
+                            if (ticket != generation || isDestroyed()) return;
+                            pendingPhoto = null;
+                            if (!translated.original().isEmpty()) input.setText(translated.original());
                             show(ticket, toCode, translated);
                         });
                 });
-            } catch (Exception error) { runOnUiThread(() -> update(ticket, "Foto tidak dapat dibuka.")); }
+            } catch (Exception error) {
+                runOnUiThread(() -> {
+                    if (ticket != generation || isDestroyed()) return;
+                    pendingPhoto = null;
+                    status.setText("Foto tidak dapat dibuka.");
+                });
+            }
         });
     }
 
@@ -422,6 +458,7 @@ public final class TextDesk extends Activity {
     @Override protected void onSaveInstanceState(Bundle state) {
         state.putString("text", input.getText().toString());
         state.putString("export", pendingExport);
+        state.putParcelable("pending_photo", pendingPhoto);
         if (latest != null) {
             state.putString("original", latest.original());
             state.putString("translation", latest.translated());

@@ -109,6 +109,17 @@ public class SmokeInstrumentation extends Instrumentation {
         require(TranslationJournal.read(context, true).isEmpty() && TranslationJournal.read(context, false).size() == 1,
             "history and favorites are independent");
 
+        var textShare = new android.content.Intent(android.content.Intent.ACTION_SEND).setType("text/plain")
+            .putExtra(android.content.Intent.EXTRA_TEXT, "Good morning!");
+        require(SharedTranslation.read(textShare).text().equals("Good morning!"),
+            "Android shares plain text to the translator");
+        var imageShare = new android.content.Intent(android.content.Intent.ACTION_SEND).setType("image/png");
+        imageShare.putExtra(android.content.Intent.EXTRA_STREAM, android.net.Uri.parse("file:///private.png"));
+        require(SharedTranslation.read(imageShare).image() == null && SharedTranslation.read(null) == null,
+            "shared images require a content URI and unrelated intents have no effect");
+        imageShare.putExtra(android.content.Intent.EXTRA_STREAM, android.net.Uri.parse("content://fixture/welcome.png"));
+        require(SharedTranslation.read(imageShare).image() != null, "Android accepts an image content URI for OCR");
+
         var totals = ReviewDeck.stats(context, now);
         require(totals.total() == 2 && totals.due() == 0 && totals.correct() == 1 && totals.repeat() == 1,
             "study statistics count reviews and due cards");
