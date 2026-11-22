@@ -236,6 +236,12 @@ def test_settings():
     tap('Kecepatan pembaruan')
     tap('Stabil')
     require('Stabil')
+    reveal('Ukuran teks layar')
+    contrast = reveal('Kontras terang')
+    initial = contrast.get('checked')
+    tap_node(contrast)
+    assert reveal('Kontras terang').get('checked') != initial, 'Overlay contrast toggle did not change'
+    tap_node(reveal('Kontras terang'))
     adb('shell', 'input', 'keyevent', 'KEYCODE_BACK')
 
 
@@ -254,7 +260,7 @@ def test_translation():
     tap_node(reveal('Favorit'))
     reveal('Pasangan bahasa')
     reveal('Kamus pribadi')
-    reveal('Kontras terang')
+    reveal('Atur tampilan layar')
     adb('shell', 'input', 'keyevent', 'KEYCODE_BACK')
 
 

@@ -95,31 +95,8 @@ public final class TextDesk extends Activity {
         OmniUi.addSpace(library, books, 7);
         OmniUi.toolRow(library, "Pasangan bahasa", "Simpan pengaturan bahasa yang sering dipakai", "⇄", this::pairs);
         OmniUi.toolRow(library, "Kamus pribadi", "Gunakan padanan untuk frasa tertentu", "≡", this::glossary);
-        var look = OmniUi.card(this, root, "Tampilan overlay");
-        var scale = new TextView(this);
-        scale.setTextColor(Chat.INK);
-        int current = settings.getInt("text_size", 100);
-        scale.setText("Ukuran teks · " + current + "%");
-        look.addView(scale);
-        var seek = new SeekBar(this);
-        seek.setContentDescription("Ukuran teks terjemahan");
-        seek.setMax(60);
-        seek.setProgress(current - 80);
-        look.addView(seek);
-        seek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
-            public void onStartTrackingTouch(SeekBar bar) {}
-            public void onStopTrackingTouch(SeekBar bar) {}
-            public void onProgressChanged(SeekBar bar, int progress, boolean user) {
-                scale.setText("Ukuran teks · " + (80 + progress) + "%");
-                if (user) settings.edit().putInt("text_size", 80 + progress).apply();
-            }
-        });
-        var theme = new Switch(this);
-        theme.setText("Kontras terang");
-        theme.setChecked(settings.getBoolean("light", false));
-        theme.setOnCheckedChangeListener((view, checked) -> settings.edit().putBoolean("light", checked).apply());
-        look.addView(theme);
-        OmniUi.addSpace(look, OmniUi.caption(this, "Bahasa dan tampilan juga dipakai oleh terjemah layar serta kamera. OCR membaca aksara Latin."), 8);
+        OmniUi.toolRow(library, "Atur tampilan layar", "Ukuran teks, kontras, dan kepekatan", "Aa", () ->
+            startActivity(new Intent(this, ScreenTools.class)));
         scroll.addView(root);
         setContentView(scroll);
         var listener = new AdapterView.OnItemSelectedListener() {

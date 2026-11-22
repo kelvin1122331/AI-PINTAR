@@ -38,24 +38,39 @@ public final class ScreenTools extends Activity {
         option(reading, "Area pembacaan", "screen_area", ScreenOptions.AREAS, values.area());
         option(reading, "Susunan terjemahan", "screen_format", ScreenOptions.FORMATS, values.format());
         var display = OmniUi.card(this, root, "Tampilan");
-        var opacity = OmniUi.caption(this, "Kepekatan teks layar · " + values.opacity() + "%");
-        OmniUi.addSpace(display, opacity, 6);
+        slider(display, "Kepekatan teks layar", "screen_opacity", 45, 70, values.opacity());
+        slider(display, "Ukuran teks layar", "text_size", 80, 140,
+            Math.max(80, Math.min(140, TranslationPreferences.of(this).getInt("text_size", 100))));
+        var contrast = new android.widget.Switch(this);
+        contrast.setText("Kontras terang");
+        contrast.setContentDescription("Kontras terang");
+        contrast.setChecked(TranslationPreferences.of(this).getBoolean("light", false));
+        contrast.setOnCheckedChangeListener((view, checked) -> {
+            TranslationPreferences.of(this).edit().putBoolean("light", checked).apply();
+            notifyBubble();
+        });
+        OmniUi.addSpace(display, contrast, 7);
+        OmniUi.toolRow(display, "Hasil layar terakhir", "Lihat teks asli dan terjemahannya", "≡", () ->
+            startActivity(new Intent(this, ScreenTools.class).putExtra("readback", true)));
+    }
+
+    private void slider(LinearLayout card, String title, String key, int minimum, int maximum, int current) {
+        var label = OmniUi.caption(this, title + " · " + current + "%");
+        OmniUi.addSpace(card, label, 6);
         var slider = new SeekBar(this);
-        slider.setMax(25);
-        slider.setProgress(values.opacity() - 45);
-        slider.setContentDescription("Kepekatan teks layar");
+        slider.setMax(maximum - minimum);
+        slider.setProgress(current - minimum);
+        slider.setContentDescription(title);
         slider.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             public void onStartTrackingTouch(SeekBar bar) {}
             public void onStopTrackingTouch(SeekBar bar) { notifyBubble(); }
             public void onProgressChanged(SeekBar bar, int progress, boolean fromUser) {
-                opacity.setText("Kepekatan teks layar · " + (45 + progress) + "%");
-                if (fromUser) TranslationPreferences.of(ScreenTools.this).edit()
-                    .putInt("screen_opacity", 45 + progress).apply();
+                int value = minimum + progress;
+                label.setText(title + " · " + value + "%");
+                if (fromUser) TranslationPreferences.of(ScreenTools.this).edit().putInt(key, value).apply();
             }
         });
-        display.addView(slider);
-        OmniUi.toolRow(display, "Hasil layar terakhir", "Lihat teks asli dan terjemahannya", "≡", () ->
-            startActivity(new Intent(this, ScreenTools.class).putExtra("readback", true)));
+        card.addView(slider);
     }
 
     private void option(LinearLayout card, String title, String key, String[] options, int current) {
