@@ -79,11 +79,31 @@ def bubble():
                 break
     require('Mode otomatis')
 
+def screencap():
+    errors = []
+    for attempt in range(4):
+        try:
+            if attempt:
+                adb('shell', 'screencap', '/data/local/tmp/omni-regression.rgba')
+                command = ['adb', 'exec-out', 'cat', '/data/local/tmp/omni-regression.rgba']
+            else:
+                command = ['adb', 'exec-out', 'screencap']
+            raw = subprocess.check_output(command, timeout=18)
+            if len(raw) >= 12:
+                w, h, pixel_format = struct.unpack_from('<III', raw)
+                required = w * h * 4
+                if 100 < w < 3000 and 100 < h < 4000 and pixel_format in (1, 2) and len(raw) >= required + 12:
+                    return w, h, raw[-required:]
+                errors.append((len(raw), required, w, h, pixel_format))
+            else:
+                errors.append((len(raw),))
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+            errors.append(str(error))
+        time.sleep(.25)
+    raise AssertionError('No complete RGBA frame from the test emulator: ' + repr(errors))
+
 def annotation_pixels():
-    raw = subprocess.check_output(['adb', 'exec-out', 'screencap'], timeout=20)
-    w, h, pixel_format = struct.unpack_from('<III', raw)
-    assert 100 < w < 3000 and 100 < h < 4000 and pixel_format in (1, 2), (w, h, pixel_format)
-    data = raw[-w*h*4:]
+    w, h, data = screencap()
     count = 0
     for y in range(h // 8, h * 9 // 10, 3):
         for x in range(w // 24, w * 23 // 24, 3):
@@ -100,7 +120,11 @@ def wait_overlay(seconds):
         if count > 350:
             return count
         time.sleep(.65)
-    raise AssertionError('No visible translation annotation on fixture')
+    print('Projection at capture timeout:', adb('shell', 'dumpsys', 'media_projection'))
+    bubble()
+    labels = [item.get('text') or item.get('content-desc') for item in nodes()
+              if item.get('text') or item.get('content-desc')]
+    raise AssertionError('No visible translation annotation on fixture; panel: ' + repr(labels))
 
 def fixture_labels():
     return [item.get('text') for item in nodes() if 'Good morning' in (item.get('text') or '')
