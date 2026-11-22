@@ -62,18 +62,31 @@ APP = PACKAGE + '/.MainActivity'
 TEST = PACKAGE + '.test/id.omni.floatai.EnglishFixture'
 
 def reveal(label):
-    for _ in range(8):
-        item = node(label, 1)
-        if item is not None:
-            return item
-        view = next((n for n in nodes() if n.get('scrollable') == 'true'), None)
-        if view is None:
+    target = label.casefold()
+    current = []
+    for step in range(12):
+        current = nodes()
+        match = next((item for item in current if any((item.get(key) or '').casefold() == target
+                     for key in ('text', 'content-desc'))), None)
+        if match is not None:
+            return match
+        gestured = [item for item in current if item.get('scrollable') == 'true'
+                    and 'ScrollView' in (item.get('class') or '')]
+        if not gestured:
+            gestured = [item for item in current if item.get('scrollable') == 'true']
+        if not gestured:
             scroll()
-        else:
-            left, top, right, bottom = map(int, re.findall(r'\d+', view.get('bounds', '')))
-            x = str((left + right) // 2)
-            adb('shell', 'input', 'swipe', x, str(bottom - 40), x, str(top + 30), '370')
-    raise AssertionError('Missing UI: ' + label)
+            continue
+        bounds = [tuple(map(int, re.findall(r'\d+', item.get('bounds', '')))) for item in gestured]
+        left, top, right, bottom = max(bounds, key=lambda box: (box[2]-box[0]) * (box[3]-box[1]))
+        x = str(left + max(6, (right-left)//32))
+        high, low = int(top + (bottom-top)*.86), int(top + (bottom-top)*.21)
+        if step >= 8:
+            high, low = low, high
+        adb('shell', 'input', 'swipe', x, str(high), x, str(low), '320')
+    labels = [item.get('text') or item.get('content-desc') for item in current
+              if item.get('text') or item.get('content-desc')]
+    raise AssertionError(f'Missing UI: {label}; visible: {labels}')
 
 def open_activity():
     launched = adb('shell', 'am', 'start', '-S', '-W', '-n', APP)
@@ -155,134 +168,168 @@ adb('shell', 'pm', 'clear', PACKAGE)
 adb('shell', 'pm', 'grant', PACKAGE, 'android.permission.CAMERA')
 adb('shell', 'pm', 'grant', PACKAGE, 'android.permission.POST_NOTIFICATIONS')
 adb('shell', 'appops', 'set', PACKAGE, 'SYSTEM_ALERT_WINDOW', 'allow')
-open_activity()
-tap_node(reveal('Aktifkan floating'))
-adb('shell', 'am', 'start', '-W', '-n', TEST)
-before = fixture_labels()
-assert before, 'English fixture did not open'
-bubble()
-tap('Mode otomatis')
-tap_node(reveal('Aktifkan Terjemah Layar'))
-start_button = None
-for _ in range(7):
-    shown = nodes()
-    start_button = next((item for item in shown
-                         if item.get('package') == 'com.android.systemui'
-                         and (item.get('text') or '').casefold() in ('start', 'start now', 'share screen', 'share')), None)
-    if start_button is not None:
-        break
-    time.sleep(.65)
-if start_button is None:
-    print('Consent UI:', [(item.get('text'), item.get('content-desc'), item.get('package'))
-                         for item in shown if item.get('text') or item.get('content-desc')])
-    current = adb('shell', 'dumpsys', 'activity', 'activities')
-    print('Foreground:', [line.strip() for line in current.splitlines() if 'ResumedActivity' in line])
-    launch = adb('logcat', '-d', '-s', 'ActivityTaskManager:I', 'WindowManager:W')
-    print('Launch log:', '\n'.join(line for line in launch.splitlines() if 'capture' in line.lower()
-          or 'projection' in line.lower() or 'floatai' in line.lower())[-6000:])
-    raise AssertionError('Screen capture confirmation did not appear')
-tap_node(start_button)
-print('PASS UI Android screen capture confirmation', flush=True)
-first = wait_overlay(70)
-for _ in range(9):
-    visible = annotation_pixels()
-    assert visible >= first * .55, ('Overlay flickered on a stable page', first, visible)
-    time.sleep(.3)
-print('PASS visible translation remains stable across consecutive screenshots', flush=True)
+def test_screen():
+    open_activity()
+    tap_node(reveal('Aktifkan floating'))
+    adb('shell', 'am', 'start', '-W', '-n', TEST)
+    before = fixture_labels()
+    assert before, 'English fixture did not open'
+    bubble()
+    tap('Mode otomatis')
+    tap_node(reveal('Aktifkan Terjemah Layar'))
+    start_button = None
+    for _ in range(7):
+        shown = nodes()
+        start_button = next((item for item in shown
+                             if item.get('package') == 'com.android.systemui'
+                             and (item.get('text') or '').casefold() in ('start', 'start now', 'share screen', 'share')), None)
+        if start_button is not None:
+            break
+        time.sleep(.65)
+    if start_button is None:
+        print('Consent UI:', [(item.get('text'), item.get('content-desc'), item.get('package'))
+                             for item in shown if item.get('text') or item.get('content-desc')])
+        current = adb('shell', 'dumpsys', 'activity', 'activities')
+        print('Foreground:', [line.strip() for line in current.splitlines() if 'ResumedActivity' in line])
+        launch = adb('logcat', '-d', '-s', 'ActivityTaskManager:I', 'WindowManager:W')
+        print('Launch log:', '\n'.join(line for line in launch.splitlines() if 'capture' in line.lower()
+              or 'projection' in line.lower() or 'floatai' in line.lower())[-6000:])
+        raise AssertionError('Screen capture confirmation did not appear')
+    tap_node(start_button)
+    print('PASS UI Android screen capture confirmation', flush=True)
+    first = wait_overlay(70)
+    for _ in range(9):
+        visible = annotation_pixels()
+        assert visible >= first * .55, ('Overlay flickered on a stable page', first, visible)
+        time.sleep(.3)
+    print('PASS visible translation remains stable across consecutive screenshots', flush=True)
 
-for _ in range(3):
-    scroll()
-    assert annotation_pixels() > 350, 'Translations vanished during consecutive scroll gestures'
-    time.sleep(.25)
-time.sleep(1.2)
-assert fixture_labels() != before, 'Underlying fixture cannot scroll'
-wait_overlay(35)
-print('PASS translation remains visible during repeated scrolling and after the new page settles', flush=True)
-bubble()
-tap_node(reveal('Kunci hasil'))
-wait_overlay(15)
-bubble()
-tap_node(reveal('Buka kunci hasil'))
-bubble()
-tap_node(reveal('Nonaktifkan Terjemah Layar'))
-reveal('Aktifkan Terjemah Layar')
-print('PASS live translation locks, unlocks, and stops from the floating menu', flush=True)
-tap_node(reveal('Hasil layar terakhir'))
-require('Hasil layar terakhir')
-require('Ekspor TXT')
-adb('shell', 'input', 'keyevent', 'KEYCODE_BACK')
+    for _ in range(3):
+        scroll()
+        assert annotation_pixels() > 350, 'Translations vanished during consecutive scroll gestures'
+        time.sleep(.25)
+    time.sleep(1.2)
+    assert fixture_labels() != before, 'Underlying fixture cannot scroll'
+    wait_overlay(35)
+    print('PASS translation remains visible during repeated scrolling and after the new page settles', flush=True)
+    bubble()
+    tap_node(reveal('Kunci hasil'))
+    wait_overlay(15)
+    bubble()
+    tap_node(reveal('Buka kunci hasil'))
+    bubble()
+    tap_node(reveal('Nonaktifkan Terjemah Layar'))
+    reveal('Aktifkan Terjemah Layar')
+    print('PASS live translation locks, unlocks, and stops from the floating menu', flush=True)
+    tap_node(reveal('Hasil layar terakhir'))
+    require('Hasil layar terakhir')
+    require('Ekspor TXT')
+    adb('shell', 'input', 'keyevent', 'KEYCODE_BACK')
 
-open_activity()
-tap_node(reveal('Atur terjemah layar'))
-require('Area pembacaan')
-require('Susunan terjemahan')
-require('Kepekatan teks layar')
-tap('Kecepatan pembaruan')
-tap('Stabil')
-require('Stabil')
-adb('shell', 'input', 'keyevent', 'KEYCODE_BACK')
-open_activity()
-tap_node(reveal('Terjemahan'))
-require('Bahasa sumber')
-require('Bahasa tujuan')
-tap('Terjemahkan teks')
-require('Masukkan teks terlebih dulu.')
-tap('Pilih foto')
-time.sleep(.9)
-adb('shell', 'input', 'keyevent', 'KEYCODE_BACK')
-require('Terjemahan')
-tap_node(reveal('Riwayat'))
-tap_node(reveal('Favorit'))
-reveal('Pasangan bahasa')
-reveal('Kamus pribadi')
-reveal('Kontras terang')
-adb('shell', 'input', 'keyevent', 'KEYCODE_BACK')
 
-tap_node(reveal('Belajar'))
-require('AI Study Mode')
-tap('Buat')
-require('Isi materi terlebih dulu.')
-reveal('Impor TXT')
-reveal('Ulas kartu hari ini')
-reveal('Impor kartu TSV')
-reveal('Ekspor kartu TSV')
-tap_node(reveal('Statistik belajar'))
-require('Statistik belajar')
-adb('shell', 'input', 'keyevent', 'KEYCODE_BACK')
-adb('shell', 'input', 'keyevent', 'KEYCODE_BACK')
-open_activity()
-tap_node(reveal('Kamera'))
-require('Terjemah Kamera')
-tap('Jeda')
-require('Lanjut')
-tap('Lanjut')
-require('Jeda')
-require('Zoom kamera')
-tap('Bekukan gambar')
-require('Lanjutkan kamera')
-tap('Lanjutkan kamera')
-tap('Kamera depan')
-require('Kamera belakang')
-tap('Senter')
-adb('shell', 'input', 'keyevent', 'KEYCODE_BACK')
-open_activity()
-tap_node(reveal('Monitor koneksi'))
-require('Tes katalog model')
-require('Filter status koneksi')
-adb('shell', 'input', 'keyevent', 'KEYCODE_BACK')
+def test_settings():
+    open_activity()
+    tap_node(reveal('Atur terjemah layar'))
+    require('Area pembacaan')
+    require('Susunan terjemahan')
+    require('Kepekatan teks layar')
+    tap('Kecepatan pembaruan')
+    tap('Stabil')
+    require('Stabil')
+    adb('shell', 'input', 'keyevent', 'KEYCODE_BACK')
 
-print(adb('shell', 'am', 'start', '-W', '-n', PACKAGE + '/.ShareTranslation',
-          '-a', 'android.intent.action.SEND', '-t', 'text/plain',
-          '--es', 'android.intent.extra.TEXT', 'Good_morning_from_share'), flush=True)
-require('Good_morning_from_share')
-require('Teks diterima. Ketuk Terjemahkan teks.')
-adb('shell', 'input', 'keyevent', 'KEYCODE_BACK')
-print(adb('shell', 'am', 'start', '-W', '-n', TEST, '--es', 'fixture', 'image'), flush=True)
-deadline = time.monotonic() + 85
-while time.monotonic() < deadline:
-    actual = [item.get('text') or '' for item in nodes()]
-    if any('selamat pagi' in text.lower() for text in actual):
-        print('PASS received image from another app and translated its text', flush=True)
-        break
-else:
-    raise AssertionError('Shared picture did not translate; visible: ' + repr(actual))
+
+def test_translation():
+    open_activity()
+    tap_node(reveal('Terjemahan'))
+    require('Bahasa sumber')
+    require('Bahasa tujuan')
+    tap('Terjemahkan teks')
+    require('Masukkan teks terlebih dulu.')
+    tap('Pilih foto')
+    time.sleep(.9)
+    adb('shell', 'input', 'keyevent', 'KEYCODE_BACK')
+    require('Terjemahan')
+    tap_node(reveal('Riwayat'))
+    tap_node(reveal('Favorit'))
+    reveal('Pasangan bahasa')
+    reveal('Kamus pribadi')
+    reveal('Kontras terang')
+    adb('shell', 'input', 'keyevent', 'KEYCODE_BACK')
+
+
+def test_study():
+    open_activity()
+    tap_node(reveal('Belajar'))
+    require('AI Study Mode')
+    tap('Buat')
+    require('Isi materi terlebih dulu.')
+    reveal('Impor TXT')
+    reveal('Ulas kartu hari ini')
+    reveal('Impor kartu TSV')
+    reveal('Ekspor kartu TSV')
+    tap_node(reveal('Statistik belajar'))
+    require('Statistik belajar')
+    adb('shell', 'input', 'keyevent', 'KEYCODE_BACK')
+    adb('shell', 'input', 'keyevent', 'KEYCODE_BACK')
+
+
+def test_camera():
+    open_activity()
+    tap_node(reveal('Kamera'))
+    require('Terjemah Kamera')
+    tap('Jeda')
+    require('Lanjut')
+    tap('Lanjut')
+    require('Jeda')
+    require('Zoom kamera')
+    tap('Bekukan gambar')
+    require('Lanjutkan kamera')
+    tap('Lanjutkan kamera')
+    tap('Kamera depan')
+    require('Kamera belakang')
+    tap('Senter')
+    adb('shell', 'input', 'keyevent', 'KEYCODE_BACK')
+
+
+def test_connection():
+    open_activity()
+    tap_node(reveal('Monitor koneksi'))
+    require('Tes katalog model')
+    require('Filter status koneksi')
+    adb('shell', 'input', 'keyevent', 'KEYCODE_BACK')
+
+
+def test_share_text():
+    print(adb('shell', 'am', 'start', '-W', '-n', PACKAGE + '/.ShareTranslation',
+              '-a', 'android.intent.action.SEND', '-t', 'text/plain',
+              '--es', 'android.intent.extra.TEXT', 'Good_morning_from_share'), flush=True)
+    require('Good_morning_from_share')
+    require('Teks diterima. Ketuk Terjemahkan teks.')
+    adb('shell', 'input', 'keyevent', 'KEYCODE_BACK')
+
+
+def test_share_image():
+    print(adb('shell', 'am', 'start', '-W', '-n', TEST, '--es', 'fixture', 'image'), flush=True)
+    deadline = time.monotonic() + 85
+    while time.monotonic() < deadline:
+        actual = [item.get('text') or '' for item in nodes()]
+        if any('selamat pagi' in text.lower() for text in actual):
+            print('PASS received image from another app and translated its text', flush=True)
+            break
+    else:
+        raise AssertionError('Shared picture did not translate; visible: ' + repr(actual))
+
+failures = []
+for verify in (test_screen, test_settings, test_translation, test_study, test_camera, test_connection,
+               test_share_text, test_share_image):
+    print("Checking", verify.__name__, flush=True)
+    try:
+        verify()
+    except Exception as error:
+        print(f"FAIL {verify.__name__}: {error}", flush=True)
+        failures.append(verify.__name__)
+    else:
+        print(f"PASS {verify.__name__}", flush=True)
+if failures:
+    raise AssertionError("Failed emulator scenarios: " + ", ".join(failures))
