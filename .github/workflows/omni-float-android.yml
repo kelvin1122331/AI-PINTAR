@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - 'settings.gradle'
+      - 'gradle.properties'
       - 'app/**'
       - 'tools/android-smoke.py'
       - '.github/workflows/omni-float-android.yml'
