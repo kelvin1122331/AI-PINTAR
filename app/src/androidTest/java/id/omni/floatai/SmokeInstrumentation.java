@@ -164,6 +164,15 @@ public class SmokeInstrumentation extends Instrumentation {
         require(!visual.confirmEmpty(pageB, 30000, 2000) && !visual.confirmEmpty(pageC, 32000, 2000)
             && !visual.confirmEmpty(pageC, 32400, 2000), "rapid viewport changes keep the previous overlay visible");
         require(visual.confirmEmpty(pageC, 34200, 2000), "sustained empty OCR on a new screen clears stale labels");
+        var topLabel = new TranslationOverlay.Label(60, 120, 450, 55, "Judul", "Heading");
+        var bodyLabel = new TranslationOverlay.Label(60, 320, 350, 60, "Bagian kedua", "Second section");
+        var newerTitle = new TranslationOverlay.Label(63, 122, 450, 55, "Tajuk", "Heading");
+        visual.present(presented, List.of(topLabel, bodyLabel));
+        var partial = visual.present(samePage, List.of(newerTitle));
+        require(partial.size() == 2 && partial.contains(newerTitle) && partial.contains(bodyLabel),
+            "a temporarily missing paragraph stays visible while another result changes");
+        require(visual.present(pageC, List.of(newerTitle)).size() == 1,
+            "a new viewport replaces labels from the previous viewport");
         var scoped = ScreenOptions.crop(Bitmap.createBitmap(400, 900, Bitmap.Config.ARGB_8888), 3);
         var overlayLabel = new TranslationOverlay.Label(10, 200, 90, 100, "Terjemahan", "Source");
         var placed = scoped.place(List.of(overlayLabel)).get(0);

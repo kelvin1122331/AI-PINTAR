@@ -232,8 +232,7 @@ final class ScreenAssist {
             return;
         }
         if (!result.labels().isEmpty()) {
-            var labels = crop.place(result.labels());
-            overlay.presented(scene);
+            var labels = overlay.present(scene, crop.place(result.labels()));
             if (service.showTranslation(labels)) pauseForRender();
             service.screenStatus("Terjemah aktif · " + labels.size() + " bagian.");
             return;

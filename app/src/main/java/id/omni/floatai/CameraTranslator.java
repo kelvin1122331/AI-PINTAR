@@ -293,8 +293,7 @@ public final class CameraTranslator extends ComponentActivity {
             return;
         }
         if (!result.labels().isEmpty()) {
-            var labels = front ? flipLabels(result.labels()) : result.labels();
-            stable.presented(scene);
+            var labels = stable.present(scene, front ? flipLabels(result.labels()) : result.labels());
             if (!OmniUi.sameLabels(last, labels, 8)) {
                 last = labels;
                 layer.setLabels(last);
