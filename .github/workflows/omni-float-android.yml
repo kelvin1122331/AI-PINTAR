@@ -39,7 +39,7 @@ jobs:
           arch: x86_64
           profile: pixel_6
           disable-animations: true
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot -camera-back virtualscene -camera-front emulated
+          emulator-options: -no-window -memory 3072 -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot -camera-back virtualscene -camera-front emulated
           script: |
             adb install -g app/build/outputs/apk/debug/app-x86_64-debug.apk
             adb install app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk

@@ -5,8 +5,21 @@ def adb(*args):
     return subprocess.check_output(['adb', *args], text=True, timeout=45).strip()
 
 def nodes():
-    adb('shell', 'uiautomator', 'dump', '/sdcard/verify-omni.xml')
-    return list(ET.fromstring(adb('exec-out', 'cat', '/sdcard/verify-omni.xml')).iter('node'))
+    for _ in range(4):
+        dump = adb('shell', 'uiautomator', 'dump', '/sdcard/verify-omni.xml')
+        if 'ERROR:' in dump:
+            time.sleep(.4)
+            continue
+        state = adb('exec-out', 'cat', '/sdcard/verify-omni.xml')
+        current = list(ET.fromstring(state).iter('node'))
+        if any("Pixel Launcher isn't responding" == item.get('text') for item in current):
+            close = next((item for item in current if item.get('text') == "Close app"), None)
+            if close is not None:
+                tap_node(close)
+                print('Dismissed a test emulator launcher dialog', flush=True)
+                continue
+        return current
+    raise AssertionError('Android test emulator did not return its UI hierarchy')
 
 def node(label, retries=3):
     for _ in range(retries):
@@ -130,7 +143,9 @@ def fixture_labels():
     return [item.get('text') for item in nodes() if 'Good morning' in (item.get('text') or '')
         or 'Thank you for reading' in (item.get('text') or '')]
 
-# Keep the emulator awake during the full workflow, including the model download.
+# Use a practical portrait viewport and keep the test device awake.
+adb('shell', 'wm', 'size', '800x1800')
+adb('shell', 'wm', 'density', '320')
 adb('shell', 'svc', 'power', 'stayon', 'true')
 adb('shell', 'settings', 'put', 'system', 'screen_off_timeout', '1800000')
 adb('shell', 'input', 'keyevent', 'KEYCODE_WAKEUP')
