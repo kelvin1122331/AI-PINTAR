@@ -2,9 +2,7 @@
     <application>
         <activity android:name="id.omni.floatai.EnglishFixture" android:exported="true"
             android:theme="@android:style/Theme.Material.Light.NoActionBar"/>
-        <provider android:name="androidx.core.content.FileProvider"
-            android:authorities="${applicationId}.fixture" android:exported="false" android:grantUriPermissions="true">
-            <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/share_fixture_paths"/>
-        </provider>
+        <provider android:name="id.omni.floatai.FixtureImageProvider"
+            android:authorities="${applicationId}.fixture" android:exported="false" android:grantUriPermissions="true"/>
     </application>
 </manifest>

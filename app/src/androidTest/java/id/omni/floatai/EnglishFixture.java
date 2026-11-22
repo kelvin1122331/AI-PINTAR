@@ -46,7 +46,7 @@ public final class EnglishFixture extends Activity {
             try (var output = new java.io.FileOutputStream(photo)) {
                 bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, output);
             } finally { bitmap.recycle(); }
-            var uri = androidx.core.content.FileProvider.getUriForFile(this, getPackageName() + ".fixture", photo);
+            var uri = android.net.Uri.parse("content://" + getPackageName() + ".fixture/welcome.png");
             var send = new android.content.Intent(android.content.Intent.ACTION_SEND)
                 .setClassName("id.omni.floatai", "id.omni.floatai.ShareTranslation").setType("image/png")
                 .putExtra(android.content.Intent.EXTRA_STREAM, uri).addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION);
