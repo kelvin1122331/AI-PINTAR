@@ -74,7 +74,7 @@ jobs:
           if gh release view "$tag" >/dev/null 2>&1; then
             echo "Release $tag already exists."
           else
-            gh release create "$tag" "$asset" "Omni_Float_AI_v$version-universal.apk" --target "$GITHUB_SHA" --title "Omni Float AI $version" --notes "Terjemahan layar yang stabil, kontrol kamera, kamus pribadi, alat belajar, dan diagnostik API."
+            gh release create "$tag" "$asset" "Omni_Float_AI_v$version-universal.apk" --target "$GITHUB_SHA" --title "Omni Float AI $version" --notes "Layar pembuka dengan orbit platform kuis, Instagram owner @aetherjy, dan beranda yang diperbarui."
             URL="https://github.com/$GITHUB_REPOSITORY/releases/download/$tag/$asset"
             curl --fail --location --retry 3 --retry-all-errors --max-time 90 "$URL" --output /tmp/omni-public.apk
             cmp "$asset" /tmp/omni-public.apk

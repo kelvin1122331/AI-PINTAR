@@ -168,6 +168,42 @@ adb('shell', 'pm', 'clear', PACKAGE)
 adb('shell', 'pm', 'grant', PACKAGE, 'android.permission.CAMERA')
 adb('shell', 'pm', 'grant', PACKAGE, 'android.permission.POST_NOTIFICATIONS')
 adb('shell', 'appops', 'set', PACKAGE, 'SYSTEM_ALERT_WINDOW', 'allow')
+def test_welcome():
+    saved_scale = adb('shell', 'settings', 'get', 'global', 'animator_duration_scale')
+    try:
+        adb('shell', 'settings', 'put', 'global', 'animator_duration_scale', '1')
+        print(adb('shell', 'am', 'start', '-S', '-W', '-n', APP), flush=True)
+        require('Selamat datang')
+        require('Instagram @aetherjy')
+        art = reveal('Orbit platform kuis')
+        left, top, right, bottom = map(int, re.findall(r'\d+', art.get('bounds', '')))
+        def sample_orbit():
+            w, h, pixels = screencap()
+            return bytes(pixels[((y*w+x)*4)+channel]
+                         for y in range(top, min(h, bottom), 5)
+                         for x in range(left, min(w, right), 5)
+                         for channel in range(3))
+        first = sample_orbit()
+        time.sleep(.65)
+        second = sample_orbit()
+        changed = sum(abs(x-y) > 24 for x, y in zip(first, second))
+        assert changed > 210, f'Orbit animation did not move enough: {changed}'
+        print(f'PASS orbit animation moved {changed} sampled color channels', flush=True)
+        tap('Mulai')
+        require('Aktifkan floating')
+        open_activity()
+        assert node('Selamat datang', 1) is None, 'Welcome appeared again after completion'
+        tap_node(reveal('Lihat layar pembuka'))
+        require('Selamat datang')
+        tap_node(reveal('Mulai'))
+        require('Aktifkan floating')
+    finally:
+        if saved_scale == 'null':
+            adb('shell', 'settings', 'delete', 'global', 'animator_duration_scale')
+        else:
+            adb('shell', 'settings', 'put', 'global', 'animator_duration_scale', saved_scale)
+
+
 def test_screen():
     open_activity()
     tap_node(reveal('Aktifkan floating'))
@@ -329,7 +365,7 @@ def test_share_image():
         raise AssertionError('Shared picture did not translate; visible: ' + repr(actual))
 
 failures = []
-for verify in (test_screen, test_settings, test_translation, test_study, test_camera, test_connection,
+for verify in (test_welcome, test_screen, test_settings, test_translation, test_study, test_camera, test_connection,
                test_share_text, test_share_image):
     print("Checking", verify.__name__, flush=True)
     try:

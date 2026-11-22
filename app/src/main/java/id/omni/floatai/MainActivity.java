@@ -14,8 +14,48 @@ import android.widget.*;
 public final class MainActivity extends Activity {
     private TextView apiStatus;
     private TextView floatingStatus;
+    private boolean welcomeVisible;
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
+        boolean welcome = state == null ? !getPreferences(MODE_PRIVATE).getBoolean("intro_seen", false)
+            : state.getBoolean("welcome_visible");
+        if (welcome) showWelcome();
+        else showHome();
+    }
+
+    private void showWelcome() {
+        welcomeVisible = true;
+        apiStatus = null;
+        floatingStatus = null;
+        styleSystemBars(true);
+        setContentView(new WelcomeScreen(this, () -> {
+            getPreferences(MODE_PRIVATE).edit().putBoolean("intro_seen", true).apply();
+            showHome();
+        }));
+    }
+
+    @Override protected void onSaveInstanceState(Bundle state) {
+        state.putBoolean("welcome_visible", welcomeVisible);
+        super.onSaveInstanceState(state);
+    }
+
+    @Override public void onBackPressed() {
+        if (welcomeVisible && getPreferences(MODE_PRIVATE).getBoolean("intro_seen", false)) showHome();
+        else super.onBackPressed();
+    }
+
+    private void styleSystemBars(boolean welcome) {
+        int light = android.view.View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR | android.view.View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR;
+        var decor = getWindow().getDecorView();
+        int flags = decor.getSystemUiVisibility();
+        decor.setSystemUiVisibility(welcome ? flags & ~light : flags | light);
+        getWindow().setStatusBarColor(welcome ? 0xff1e1133 : Chat.BG);
+        getWindow().setNavigationBarColor(welcome ? 0xff100c22 : Chat.BG);
+    }
+
+    private void showHome() {
+        welcomeVisible = false;
+        styleSystemBars(false);
         var scroll = new ScrollView(this);
         scroll.setFillViewport(true);
         scroll.setBackgroundColor(Chat.BG);
@@ -31,7 +71,7 @@ public final class MainActivity extends Activity {
         root.setPadding(pad, pad, pad, pad);
         scroll.addView(root);
 
-        OmniUi.pageHeader(root, "Omni Float AI", "Terjemah, baca layar, dan belajar.");
+        addHomeHeader(root);
 
         var floating = OmniUi.card(this, root, "Asisten mengambang");
         floatingStatus = OmniUi.caption(this, "");
@@ -63,15 +103,38 @@ public final class MainActivity extends Activity {
         OmniUi.toolRow(api, "Atur bubble", "Ukuran, tepian, dan transparansi", "◌", () -> openTool(2));
 
         var platforms = OmniUi.card(this, root, "");
-        var platformNames = OmniUi.caption(this, "Quizizz / Wayground · Kahoot! · Google Forms · Microsoft Forms · Socrative · Nearpod · Blooket · Wordwall. Kompatibilitas bergantung pada opsi yang dapat dibaca Chrome.");
+        var platformNames = OmniUi.caption(this, String.join(" · ", PlatformOrbitView.PLATFORMS)
+            + ". Wayground sebelumnya bernama Quizizz. Dukungan mengikuti opsi yang dapat dibaca Chrome.");
         platformNames.setVisibility(android.view.View.GONE);
         platforms.addView(Chat.button(this, "Platform kuis", false, () -> {
             boolean open = platformNames.getVisibility() == android.view.View.VISIBLE;
             platformNames.setVisibility(open ? android.view.View.GONE : android.view.View.VISIBLE);
         }));
         OmniUi.addSpace(platforms, platformNames, 7);
+        OmniUi.addSpace(platforms, Chat.button(this, "Lihat layar pembuka", false, this::showWelcome), 8);
         setContentView(scroll);
         updateStatus();
+    }
+
+    private void addHomeHeader(LinearLayout root) {
+        var header = Chat.column(this);
+        int margin = Chat.dp(this, 20);
+        header.setPadding(margin, margin, margin, margin);
+        header.setBackground(OmniUi.hero(this));
+        var brand = new LinearLayout(this);
+        brand.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        var mark = new ImageView(this);
+        mark.setImageResource(R.drawable.omni);
+        mark.setImportantForAccessibility(android.view.View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        brand.addView(mark, new LinearLayout.LayoutParams(Chat.dp(this, 40), Chat.dp(this, 40)));
+        var title = OmniUi.title(this, "Omni Float AI", 26);
+        title.setTextColor(0xfffff7f2);
+        var titleLayout = new LinearLayout.LayoutParams(0, -2, 1);
+        titleLayout.leftMargin = Chat.dp(this, 13);
+        brand.addView(title, titleLayout);
+        header.addView(brand, new LinearLayout.LayoutParams(-1, -2));
+        OmniUi.addSpace(header, Chat.label(this, "Terjemah, baca layar, dan belajar.", 14, 0xffefe1ff), 12);
+        root.addView(header, new LinearLayout.LayoutParams(-1, -2));
     }
 
     @Override protected void onResume() {
@@ -79,7 +142,9 @@ public final class MainActivity extends Activity {
         updateStatus();
     }
 
-    private void scheduleStatus() { floatingStatus.postDelayed(this::updateStatus, 350); }
+    private void scheduleStatus() {
+        if (floatingStatus != null) floatingStatus.postDelayed(this::updateStatus, 350);
+    }
 
     private void updateStatus() {
         if (apiStatus == null) return;

@@ -7,8 +7,8 @@ android {
         minSdk 26
         targetSdk 35
         testInstrumentationRunner 'id.omni.floatai.SmokeInstrumentation'
-        versionCode 14
-        versionName '2.2.4'
+        versionCode 15
+        versionName '2.3.0'
     }
     splits {
         abi {
